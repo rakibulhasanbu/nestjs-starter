@@ -20,11 +20,8 @@ export class AdminUsersService {
     async list(query: ListUsersInput) {
         const { items, total } = await this.usersService.list(query);
         return {
-            items: items.map(toPublicUser),
-            page: query.page,
-            limit: query.limit,
-            total,
-            totalPages: Math.ceil(total / query.limit),
+            data: items.map(toPublicUser),
+            meta: { page: query.page, limit: query.limit, total },
         };
     }
 
