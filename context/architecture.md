@@ -1,5 +1,6 @@
 Use Prisma version 7
-use import alias please
+
+use absolute path please
 
 the folder architecture should be:
 src/
@@ -11,4 +12,6 @@ src/
 ├── app.module.ts
 └── main.ts
 
-do not add barrel/index.ts re-export files inside modules/ (e.g. modules/health/index.ts). import directly from the source file (e.g. `@/modules/health/health.module`).
+do not add index.ts type files where all files export didnt need that.
+
+use zod strictObject when create schema and then nestjs-zod use this to convert class dto and use in the controller and in the service use dto type which is create from the schema
