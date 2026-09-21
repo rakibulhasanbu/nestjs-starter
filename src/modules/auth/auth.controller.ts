@@ -5,8 +5,8 @@ import { CurrentUser } from "@/common/decorators/current-user.decorator.js";
 import { Public } from "@/common/decorators/public.decorator.js";
 import type { AuthenticatedUser } from "@/common/types/authenticated-request.type.js";
 import { AuthService } from "@/modules/auth/auth.service.js";
-import { RegisterDto } from "@/modules/auth/dto/register.schema.js";
-import { LoginDto } from "@/modules/auth/dto/login.schema.js";
+import { SignupDto } from "@/modules/auth/dto/signup.schema.js";
+import { SigninDto } from "@/modules/auth/dto/signin.schema.js";
 import { RefreshTokenDto } from "@/modules/auth/dto/refresh-token.schema.js";
 import { LogoutDto } from "@/modules/auth/dto/logout.schema.js";
 import { VerifyEmailDto, ResendVerificationDto } from "@/modules/auth/dto/verify-email.schema.js";
@@ -26,17 +26,17 @@ export class AuthController {
 
     @Public()
     @Throttle({ default: { limit: 5, ttl: 60_000 } })
-    @Post("register")
-    register(@Body() dto: RegisterDto) {
-        return this.authService.register(dto);
+    @Post("signup")
+    signup(@Body() dto: SignupDto) {
+        return this.authService.signup(dto);
     }
 
     @Public()
     @Throttle({ default: { limit: 10, ttl: 60_000 } })
     @HttpCode(HttpStatus.OK)
-    @Post("login")
-    login(@Body() dto: LoginDto, @Req() req: Request) {
-        return this.authService.login(dto, { userAgent: req.headers["user-agent"], ipAddress: req.ip });
+    @Post("signin")
+    signin(@Body() dto: SigninDto, @Req() req: Request) {
+        return this.authService.signin(dto, { userAgent: req.headers["user-agent"], ipAddress: req.ip });
     }
 
     @Public()

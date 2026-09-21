@@ -12,8 +12,8 @@ import { GoogleAuthService } from "@/modules/auth/google-auth.service.js";
 import { SocialIdentitiesService } from "@/modules/auth/social-identities.service.js";
 import { WebauthnService } from "@/modules/auth/webauthn.service.js";
 import { WebauthnCredentialsService } from "@/modules/auth/webauthn-credentials.service.js";
-import type { RegisterInput } from "@/modules/auth/dto/register.schema.js";
-import type { LoginInput } from "@/modules/auth/dto/login.schema.js";
+import type { SignupInput } from "@/modules/auth/dto/signup.schema.js";
+import type { SigninInput } from "@/modules/auth/dto/signin.schema.js";
 import { TokensService } from "@/modules/auth/tokens.service.js";
 import { UsersService } from "@/modules/users/users.service.js";
 import { toPublicUser, type PublicUser } from "@/modules/users/users.mapper.js";
@@ -37,7 +37,7 @@ export class AuthService {
         @Inject(EMAIL_SENDER) private readonly emailSender: EmailSender,
     ) {}
 
-    async register(input: RegisterInput): Promise<{ user: PublicUser }> {
+    async signup(input: SignupInput): Promise<{ user: PublicUser }> {
         const existing = await this.usersService.findByEmail(input.email);
         if (existing) {
             throw new ConflictException("An account with this email already exists");
@@ -55,7 +55,7 @@ export class AuthService {
         return { user: toPublicUser(user) };
     }
 
-    async login(input: LoginInput, context: LoginContext) {
+    async signin(input: SigninInput, context: LoginContext) {
         const user = await this.usersService.findByEmail(input.email);
         if (!user || user.deletedAt) {
             throw new UnauthorizedException("Invalid email or password");
