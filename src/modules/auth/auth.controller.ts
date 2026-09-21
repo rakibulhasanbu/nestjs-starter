@@ -15,6 +15,10 @@ import { ResetPasswordDto } from "@/modules/auth/dto/reset-password.schema.js";
 import { ChangePasswordDto } from "@/modules/auth/dto/change-password.schema.js";
 import { GoogleLoginDto } from "@/modules/auth/dto/google-login.schema.js";
 import { SetPasswordDto } from "@/modules/auth/dto/set-password.schema.js";
+import { WebauthnRegisterVerifyDto } from "@/modules/auth/dto/webauthn-register-verify.schema.js";
+import { WebauthnLoginOptionsDto } from "@/modules/auth/dto/webauthn-login-options.schema.js";
+import { WebauthnLoginVerifyDto } from "@/modules/auth/dto/webauthn-login-verify.schema.js";
+import type { RegistrationResponseJSON, AuthenticationResponseJSON } from "@simplewebauthn/server";
 
 @Controller("auth")
 export class AuthController {
@@ -121,5 +125,57 @@ export class AuthController {
     @Delete("sessions")
     revokeAllSessions(@CurrentUser() currentUser: AuthenticatedUser) {
         return this.authService.revokeAllSessions(currentUser.id);
+    }
+
+    @HttpCode(HttpStatus.OK)
+    @Post("webauthn/register/options")
+    getWebauthnRegistrationOptions(@CurrentUser() currentUser: AuthenticatedUser) {
+        return this.authService.getWebauthnRegistrationOptions(currentUser.id);
+    }
+
+    @HttpCode(HttpStatus.NO_CONTENT)
+    @Post("webauthn/register/verify")
+    async verifyWebauthnRegistration(
+        @CurrentUser() currentUser: AuthenticatedUser,
+        @Body() dto: WebauthnRegisterVerifyDto,
+    ) {
+        await this.authService.verifyWebauthnRegistration(
+            currentUser.id,
+            dto.credential as unknown as RegistrationResponseJSON,
+            dto.deviceName,
+        );
+    }
+
+    @Public()
+    @Throttle({ default: { limit: 10, ttl: 60_000 } })
+    @HttpCode(HttpStatus.OK)
+    @Post("webauthn/login/options")
+    getWebauthnLoginOptions(@Body() dto: WebauthnLoginOptionsDto) {
+        return this.authService.getWebauthnLoginOptions(dto.email);
+    }
+
+    @Public()
+    @Throttle({ default: { limit: 10, ttl: 60_000 } })
+    @HttpCode(HttpStatus.OK)
+    @Post("webauthn/login/verify")
+    loginWithWebauthn(@Body() dto: WebauthnLoginVerifyDto, @Req() req: Request) {
+        return this.authService.loginWithWebauthn(dto.email, dto.credential as unknown as AuthenticationResponseJSON, {
+            userAgent: req.headers["user-agent"],
+            ipAddress: req.ip,
+        });
+    }
+
+    @Get("webauthn/credentials")
+    listWebauthnCredentials(@CurrentUser() currentUser: AuthenticatedUser) {
+        return this.authService.listWebauthnCredentials(currentUser.id);
+    }
+
+    @HttpCode(HttpStatus.NO_CONTENT)
+    @Delete("webauthn/credentials/:credentialId")
+    removeWebauthnCredential(
+        @CurrentUser() currentUser: AuthenticatedUser,
+        @Param("credentialId") credentialId: string,
+    ) {
+        return this.authService.removeWebauthnCredential(currentUser.id, credentialId);
     }
 }

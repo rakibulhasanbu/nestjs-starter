@@ -9,6 +9,8 @@ import { TokensService } from "@/modules/auth/tokens.service.js";
 import { EmailTokensService } from "@/modules/auth/email-tokens.service.js";
 import { GoogleAuthService } from "@/modules/auth/google-auth.service.js";
 import { SocialIdentitiesService } from "@/modules/auth/social-identities.service.js";
+import { WebauthnService } from "@/modules/auth/webauthn.service.js";
+import { WebauthnCredentialsService } from "@/modules/auth/webauthn-credentials.service.js";
 import { JwtStrategy } from "@/modules/auth/strategies/jwt.strategy.js";
 
 @Module({
@@ -20,6 +22,8 @@ import { JwtStrategy } from "@/modules/auth/strategies/jwt.strategy.js";
         EmailTokensService,
         SocialIdentitiesService,
         GoogleAuthService,
+        WebauthnService,
+        WebauthnCredentialsService,
         JwtStrategy,
     ],
     exports: [TokensService, EmailTokensService, AuthService],

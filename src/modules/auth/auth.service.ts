@@ -1,20 +1,17 @@
-import {
-    BadRequestException,
-    ConflictException,
-    Inject,
-    Injectable,
-    UnauthorizedException,
-} from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import * as argon2 from "argon2";
 import { randomUUID } from "node:crypto";
 import { resolveDeviceInfo } from "@/common/utils/device.util.js";
 import type { Env } from "@/config/env.schema.js";
 import { AuthProvider, EmailTokenType, Role, UserStatus } from "@/database/generated/prisma/enums.js";
+import type { AuthenticationResponseJSON, RegistrationResponseJSON } from "@simplewebauthn/server";
 import { EMAIL_SENDER, type EmailSender } from "@/integrations/email/email-sender.interface.js";
 import { EmailTokensService } from "@/modules/auth/email-tokens.service.js";
 import { GoogleAuthService } from "@/modules/auth/google-auth.service.js";
 import { SocialIdentitiesService } from "@/modules/auth/social-identities.service.js";
+import { WebauthnService } from "@/modules/auth/webauthn.service.js";
+import { WebauthnCredentialsService } from "@/modules/auth/webauthn-credentials.service.js";
 import type { RegisterInput } from "@/modules/auth/dto/register.schema.js";
 import type { LoginInput } from "@/modules/auth/dto/login.schema.js";
 import { TokensService } from "@/modules/auth/tokens.service.js";
@@ -34,6 +31,8 @@ export class AuthService {
         private readonly emailTokensService: EmailTokensService,
         private readonly socialIdentitiesService: SocialIdentitiesService,
         private readonly googleAuthService: GoogleAuthService,
+        private readonly webauthnService: WebauthnService,
+        private readonly webauthnCredentialsService: WebauthnCredentialsService,
         private readonly configService: ConfigService<Env, true>,
         @Inject(EMAIL_SENDER) private readonly emailSender: EmailSender,
     ) {}
@@ -214,11 +213,7 @@ export class AuthService {
         return this.issueSession(user.id, user.email, user.role, context);
     }
 
-    private async linkOrCreateGoogleUser(profile: {
-        providerAccountId: string;
-        email: string;
-        name?: string;
-    }) {
+    private async linkOrCreateGoogleUser(profile: { providerAccountId: string; email: string; name?: string }) {
         const existingUser = await this.usersService.findByEmail(profile.email);
 
         if (existingUser) {
@@ -276,6 +271,51 @@ export class AuthService {
         await this.emailSender.sendResetPassword({ to: user.email, resetUrl });
 
         return toPublicUser(user);
+    }
+
+    /** Only logged-in users can register a passkey — it's added to an existing account, not used to create one. */
+    async getWebauthnRegistrationOptions(userId: string) {
+        const user = await this.usersService.findById(userId);
+        if (!user || user.deletedAt) {
+            throw new UnauthorizedException("Invalid credentials");
+        }
+        return this.webauthnService.createRegistrationOptions(user);
+    }
+
+    async verifyWebauthnRegistration(
+        userId: string,
+        credential: RegistrationResponseJSON,
+        deviceName?: string,
+    ): Promise<void> {
+        await this.webauthnService.verifyRegistration(userId, credential, deviceName);
+    }
+
+    async getWebauthnLoginOptions(email: string) {
+        const user = await this.usersService.findByEmail(email);
+        if (!user || user.deletedAt) {
+            throw new UnauthorizedException("No passkeys registered for this account");
+        }
+        return this.webauthnService.createAuthenticationOptions(user.id);
+    }
+
+    async loginWithWebauthn(email: string, credential: AuthenticationResponseJSON, context: LoginContext) {
+        const user = await this.usersService.findByEmail(email);
+        if (!user || user.deletedAt || user.status === UserStatus.SUSPENDED) {
+            throw new UnauthorizedException("This account is not available");
+        }
+
+        await this.webauthnService.verifyAuthentication(user.id, credential);
+
+        return this.issueSession(user.id, user.email, user.role, context);
+    }
+
+    async listWebauthnCredentials(userId: string) {
+        const credentials = await this.webauthnCredentialsService.listByUserId(userId);
+        return credentials.map(({ publicKey: _publicKey, counter: _counter, ...credential }) => credential);
+    }
+
+    async removeWebauthnCredential(userId: string, credentialId: string): Promise<void> {
+        await this.webauthnCredentialsService.remove(userId, credentialId);
     }
 
     private async sendVerificationEmail(userId: string, email: string): Promise<void> {

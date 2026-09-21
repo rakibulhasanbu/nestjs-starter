@@ -19,6 +19,11 @@ export const envSchema = z.object({
 
     GOOGLE_CLIENT_ID: z.string().min(1),
 
+    WEBAUTHN_RP_ID: z.string().min(1).default("localhost"),
+    WEBAUTHN_RP_NAME: z.string().min(1).default("Nest Starter"),
+    WEBAUTHN_ORIGIN: z.url().default("http://localhost:3000"),
+    WEBAUTHN_CHALLENGE_TTL_MINUTES: z.coerce.number().default(5),
+
     ADMIN_EMAIL: z.email(),
     ADMIN_PASSWORD: z.string().min(8),
 });
