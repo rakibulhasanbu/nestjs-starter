@@ -1,11 +1,24 @@
 import { z } from "zod";
 
-export const envSchema = z.object({
+const baseEnvSchema = z.object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
     PORT: z.coerce.number().default(3000),
     APP_URL: z.url().default("http://localhost:3000"),
 
     DATABASE_URL: z.url(),
+
+    CORS_ORIGINS: z
+        .string()
+        .optional()
+        .transform((value) =>
+            value
+                ? value
+                      .split(",")
+                      .map((origin) => origin.trim())
+                      .filter(Boolean)
+                : undefined,
+        )
+        .pipe(z.array(z.url()).optional()),
 
     JWT_ACCESS_SECRET: z.string().min(32),
     JWT_ACCESS_TTL: z.string().default("15m"),
@@ -26,6 +39,16 @@ export const envSchema = z.object({
 
     ADMIN_EMAIL: z.email(),
     ADMIN_PASSWORD: z.string().min(8),
+});
+
+export const envSchema = baseEnvSchema.superRefine((data, ctx) => {
+    if (data.NODE_ENV === "production" && (!data.CORS_ORIGINS || data.CORS_ORIGINS.length === 0)) {
+        ctx.addIssue({
+            code: "custom",
+            path: ["CORS_ORIGINS"],
+            message: "CORS_ORIGINS is required in production",
+        });
+    }
 });
 
 export type Env = z.infer<typeof envSchema>;
