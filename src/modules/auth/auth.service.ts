@@ -86,7 +86,11 @@ export class AuthService {
         }
 
         if (user.status === UserStatus.PENDING_VERIFICATION) {
-            throw new UnauthorizedException("Please verify your email before logging in");
+            await this.sendVerificationEmail(user.id, user.email);
+            throw new UnauthorizedException({
+                code: "EMAIL_NOT_VERIFIED",
+                message: "Please verify your email before logging in",
+            });
         }
 
         await this.usersService.resetFailedLogin(user.id);
@@ -137,7 +141,9 @@ export class AuthService {
         }
 
         const code = await this.emailTokensService.issueResetPasswordToken(user.id);
-        await this.emailSender.sendResetPassword({ to: user.email, code });
+        if (code) {
+            await this.emailSender.sendResetPassword({ to: user.email, code });
+        }
     }
 
     /**
@@ -266,7 +272,9 @@ export class AuthService {
         });
 
         const code = await this.emailTokensService.issueResetPasswordToken(user.id);
-        await this.emailSender.sendResetPassword({ to: user.email, code });
+        if (code) {
+            await this.emailSender.sendResetPassword({ to: user.email, code });
+        }
 
         return toPublicUser(user);
     }
@@ -318,7 +326,9 @@ export class AuthService {
 
     private async sendVerificationEmail(userId: string, email: string): Promise<void> {
         const code = await this.emailTokensService.issueVerifyEmailToken(userId);
-        await this.emailSender.sendVerifyEmail({ to: email, code });
+        if (code) {
+            await this.emailSender.sendVerifyEmail({ to: email, code });
+        }
     }
 
     private async issueSession(

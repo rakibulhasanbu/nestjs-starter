@@ -6,6 +6,7 @@ import { PrismaService } from "@/database/prisma.service.js";
 import { EmailTokenType } from "@/database/generated/prisma/enums.js";
 
 const MAX_ATTEMPTS = 5;
+const RESEND_COOLDOWN_MS = 60 * 1000;
 
 @Injectable()
 export class EmailTokensService {
@@ -14,12 +15,14 @@ export class EmailTokensService {
         private readonly configService: ConfigService<Env, true>,
     ) {}
 
-    async issueVerifyEmailToken(userId: string): Promise<string> {
+    /** Returns null (no code issued/sent) while a still-valid code is within its resend cooldown. */
+    async issueVerifyEmailToken(userId: string): Promise<string | null> {
         const ttlMinutes = this.configService.get("EMAIL_VERIFICATION_TTL_MINUTES", { infer: true });
         return this.issue(userId, EmailTokenType.VERIFY_EMAIL, ttlMinutes * 60 * 1000);
     }
 
-    async issueResetPasswordToken(userId: string): Promise<string> {
+    /** Returns null (no code issued/sent) while a still-valid code is within its resend cooldown. */
+    async issueResetPasswordToken(userId: string): Promise<string | null> {
         const ttlMinutes = this.configService.get("PASSWORD_RESET_TTL_MINUTES", { infer: true });
         return this.issue(userId, EmailTokenType.RESET_PASSWORD, ttlMinutes * 60 * 1000);
     }
@@ -42,7 +45,17 @@ export class EmailTokensService {
         return true;
     }
 
-    private async issue(userId: string, type: EmailTokenType, ttlMs: number): Promise<string> {
+    private async issue(userId: string, type: EmailTokenType, ttlMs: number): Promise<string | null> {
+        const existing = await this.prisma.emailToken.findUnique({ where: { userId_type: { userId, type } } });
+        const isActiveAndFresh =
+            existing &&
+            !existing.usedAt &&
+            existing.expiresAt > new Date() &&
+            existing.createdAt.getTime() > Date.now() - RESEND_COOLDOWN_MS;
+        if (isActiveAndFresh) {
+            return null;
+        }
+
         const { code, codeHash } = generateOtpCode();
         const expiresAt = new Date(Date.now() + ttlMs);
 
