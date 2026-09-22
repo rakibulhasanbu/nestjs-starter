@@ -109,9 +109,10 @@ export class UsersService {
         search?: string;
         role?: Role;
         status?: UserStatus;
+        deleted?: boolean;
     }): Promise<{ items: UserModel[]; total: number }> {
         const where = {
-            deletedAt: null,
+            deletedAt: params.deleted ? { not: null } : null,
             ...(params.role ? { role: params.role } : {}),
             ...(params.status ? { status: params.status } : {}),
             ...(params.search
@@ -155,5 +156,14 @@ export class UsersService {
 
     restore(id: string): Promise<UserModel> {
         return this.prisma.user.update({ where: { id }, data: { deletedAt: null } });
+    }
+
+    /** Hard-deletes soft-deleted users whose grace period has expired. */
+    async purgeExpiredDeleted(graceDays: number): Promise<number> {
+        const cutoff = new Date(Date.now() - graceDays * 24 * 60 * 60 * 1000);
+        const { count } = await this.prisma.user.deleteMany({
+            where: { deletedAt: { lt: cutoff } },
+        });
+        return count;
     }
 }

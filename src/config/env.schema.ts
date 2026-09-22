@@ -30,6 +30,8 @@ const baseEnvSchema = z.object({
     LOGIN_MAX_ATTEMPTS: z.coerce.number().default(5),
     LOGIN_LOCKOUT_MINUTES: z.coerce.number().default(15),
 
+    DELETED_USER_GRACE_DAYS: z.coerce.number().default(15),
+
     GOOGLE_CLIENT_ID: z.string().min(1),
 
     WEBAUTHN_RP_ID: z.string().min(1).default("localhost"),

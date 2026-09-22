@@ -8,6 +8,7 @@ export const listUsersSchema = z.strictObject({
     search: z.string().min(1).max(100).optional(),
     role: z.enum(Role).optional(),
     status: z.enum(UserStatus).optional(),
+    deleted: z.coerce.boolean().optional(),
 });
 
 export type ListUsersInput = z.infer<typeof listUsersSchema>;

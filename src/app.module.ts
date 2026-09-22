@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { APP_GUARD, APP_PIPE } from "@nestjs/core";
 import { ConfigModule } from "@nestjs/config";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
+import { ScheduleModule } from "@nestjs/schedule";
 import { ZodValidationPipe } from "nestjs-zod";
 import { validateEnv } from "@/config/env.schema.js";
 import { PrismaModule } from "@/database/prisma.module.js";
@@ -16,6 +17,7 @@ import { RolesGuard } from "@/common/guards/roles.guard.js";
     imports: [
         ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
         ThrottlerModule.forRoot({ throttlers: [{ ttl: 60_000, limit: 60 }] }),
+        ScheduleModule.forRoot(),
         PrismaModule,
         HealthModule,
         AuthModule,
