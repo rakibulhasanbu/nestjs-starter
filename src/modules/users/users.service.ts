@@ -1,15 +1,25 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "@/database/prisma.service.js";
-import { Role, UserStatus } from "@/database/generated/prisma/enums.js";
+import { Gender, Role, UserStatus } from "@/database/generated/prisma/enums.js";
 import type { UserModel } from "@/database/generated/prisma/models.js";
 
 export interface CreateUserData {
     email: string;
     passwordHash?: string;
     name?: string;
+    phone?: string;
     role?: Role;
     status?: UserStatus;
     emailVerifiedAt?: Date;
+}
+
+export interface UpdateProfileData {
+    name?: string;
+    username?: string;
+    phone?: string;
+    avatarUrl?: string;
+    dateOfBirth?: string;
+    gender?: Gender;
 }
 
 @Injectable()
@@ -38,6 +48,7 @@ export class UsersService {
                 username,
                 password: data.passwordHash,
                 name: data.name,
+                phone: data.phone,
                 role: data.role ?? Role.USER,
                 status: data.status ?? UserStatus.PENDING_VERIFICATION,
                 emailVerifiedAt: data.emailVerifiedAt,
@@ -75,11 +86,15 @@ export class UsersService {
         return this.prisma.user.update({ where: { id }, data: { password: passwordHash } });
     }
 
-    updateProfile(
-        id: string,
-        data: Partial<Pick<UserModel, "name" | "username" | "phone" | "avatarUrl">>,
-    ): Promise<UserModel> {
-        return this.prisma.user.update({ where: { id }, data });
+    updateProfile(id: string, data: UpdateProfileData): Promise<UserModel> {
+        const { dateOfBirth, ...rest } = data;
+        return this.prisma.user.update({
+            where: { id },
+            data: {
+                ...rest,
+                dateOfBirth: dateOfBirth === undefined ? undefined : new Date(dateOfBirth),
+            },
+        });
     }
 
     async recordFailedLogin(id: string, maxAttempts: number, lockoutMinutes: number): Promise<UserModel> {

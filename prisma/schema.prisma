@@ -28,6 +28,7 @@ enum UserStatus {
 enum EmailTokenType {
     VERIFY_EMAIL
     RESET_PASSWORD
+    DELETE_ACCOUNT
 
     @@map("email_token_type")
 }
@@ -38,6 +39,14 @@ enum AuthProvider {
     @@map("auth_provider")
 }
 
+enum Gender {
+    MALE
+    FEMALE
+    OTHER
+
+    @@map("gender")
+}
+
 model User {
     id        String  @id @default(cuid())
     email     String  @unique
@@ -46,6 +55,9 @@ model User {
     name      String?
     phone     String?
     avatarUrl String? @map("avatar_url")
+
+    dateOfBirth DateTime? @map("date_of_birth") @db.Date
+    gender      Gender?
 
     role   Role       @default(USER)
     status UserStatus @default(PENDING_VERIFICATION)

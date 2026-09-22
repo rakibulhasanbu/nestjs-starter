@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createZodDto } from "nestjs-zod";
+import { Gender } from "@/database/generated/prisma/enums.js";
 
 export const updateMeSchema = z.strictObject({
     name: z.string().min(1).max(100).optional(),
@@ -11,6 +12,8 @@ export const updateMeSchema = z.strictObject({
         .optional(),
     phone: z.string().min(5).max(20).optional(),
     avatarUrl: z.url().optional(),
+    dateOfBirth: z.iso.date().optional(),
+    gender: z.enum(Gender).optional(),
 });
 
 export type UpdateMeInput = z.infer<typeof updateMeSchema>;

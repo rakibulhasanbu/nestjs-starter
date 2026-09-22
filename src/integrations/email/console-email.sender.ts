@@ -1,6 +1,8 @@
 import { Injectable, Logger } from "@nestjs/common";
 import type {
+    AccountDeletedMessage,
     AccountLinkedMessage,
+    DeleteAccountCodeMessage,
     EmailSender,
     ResetPasswordMessage,
     VerifyEmailMessage,
@@ -21,5 +23,13 @@ export class ConsoleEmailSender implements EmailSender {
 
     async sendAccountLinked(message: AccountLinkedMessage): Promise<void> {
         this.logger.log(`[account-linked] to=${message.to} provider=${message.provider}`);
+    }
+
+    async sendDeleteAccountCode(message: DeleteAccountCodeMessage): Promise<void> {
+        this.logger.log(`[delete-account-code] to=${message.to} code=${message.code}`);
+    }
+
+    async sendAccountDeleted(message: AccountDeletedMessage): Promise<void> {
+        this.logger.log(`[account-deleted] to=${message.to} graceDays=${message.graceDays}`);
     }
 }

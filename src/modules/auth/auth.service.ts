@@ -48,6 +48,7 @@ export class AuthService {
             email: input.email,
             passwordHash,
             name: input.name,
+            phone: input.phone,
         });
 
         await this.sendVerificationEmail(user.id, user.email);
@@ -277,6 +278,36 @@ export class AuthService {
 
     async revokeAllSessions(userId: string): Promise<void> {
         await this.tokensService.revokeAllRefreshTokens(userId);
+    }
+
+    async requestAccountDeletion(userId: string): Promise<void> {
+        const user = await this.usersService.findById(userId);
+        if (!user || user.deletedAt) {
+            throw new UnauthorizedException("Invalid credentials");
+        }
+
+        const code = await this.emailTokensService.issueDeleteAccountToken(user.id);
+        if (code) {
+            await this.emailSender.sendDeleteAccountCode({ to: user.email, code });
+        }
+    }
+
+    /** Consuming the code proves intent + account ownership, then soft-deletes and logs the user out everywhere. */
+    async deleteAccount(userId: string, code: string): Promise<void> {
+        const user = await this.usersService.findById(userId);
+        if (!user || user.deletedAt) {
+            throw new UnauthorizedException("Invalid credentials");
+        }
+
+        if (!(await this.emailTokensService.consume(user.id, EmailTokenType.DELETE_ACCOUNT, code))) {
+            throw new BadRequestException("Invalid or expired confirmation code");
+        }
+
+        await this.usersService.softDelete(user.id);
+        await this.tokensService.revokeAllRefreshTokens(user.id);
+
+        const graceDays = this.configService.get("DELETED_USER_GRACE_DAYS", { infer: true });
+        await this.emailSender.sendAccountDeleted({ to: user.email, graceDays });
     }
 
     async inviteAdmin(email: string): Promise<PublicUser> {

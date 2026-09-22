@@ -15,6 +15,7 @@ import { ResetPasswordDto } from "@/modules/auth/dto/reset-password.schema.js";
 import { ChangePasswordDto } from "@/modules/auth/dto/change-password.schema.js";
 import { GoogleLoginDto } from "@/modules/auth/dto/google-login.schema.js";
 import { SetPasswordDto } from "@/modules/auth/dto/set-password.schema.js";
+import { DeleteAccountDto } from "@/modules/auth/dto/delete-account.schema.js";
 import { WebauthnRegisterVerifyDto } from "@/modules/auth/dto/webauthn-register-verify.schema.js";
 import { WebauthnLoginOptionsDto } from "@/modules/auth/dto/webauthn-login-options.schema.js";
 import { WebauthnLoginVerifyDto } from "@/modules/auth/dto/webauthn-login-verify.schema.js";
@@ -119,6 +120,19 @@ export class AuthController {
     @Post("change-password")
     async changePassword(@CurrentUser() currentUser: AuthenticatedUser, @Body() dto: ChangePasswordDto) {
         await this.authService.changePassword(currentUser.id, dto.currentPassword, dto.newPassword);
+    }
+
+    @Throttle({ default: { limit: 3, ttl: 60_000 } })
+    @HttpCode(HttpStatus.NO_CONTENT)
+    @Post("request-account-deletion")
+    async requestAccountDeletion(@CurrentUser() currentUser: AuthenticatedUser) {
+        await this.authService.requestAccountDeletion(currentUser.id);
+    }
+
+    @HttpCode(HttpStatus.NO_CONTENT)
+    @Post("delete-account")
+    async deleteAccount(@CurrentUser() currentUser: AuthenticatedUser, @Body() dto: DeleteAccountDto) {
+        await this.authService.deleteAccount(currentUser.id, dto.code);
     }
 
     @Get("sessions")

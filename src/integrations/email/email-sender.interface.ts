@@ -13,6 +13,16 @@ export interface AccountLinkedMessage {
     provider: string;
 }
 
+export interface DeleteAccountCodeMessage {
+    to: string;
+    code: string;
+}
+
+export interface AccountDeletedMessage {
+    to: string;
+    graceDays: number;
+}
+
 export const EMAIL_SENDER = Symbol("EMAIL_SENDER");
 
 /**
@@ -23,4 +33,6 @@ export interface EmailSender {
     sendVerifyEmail(message: VerifyEmailMessage): Promise<void>;
     sendResetPassword(message: ResetPasswordMessage): Promise<void>;
     sendAccountLinked(message: AccountLinkedMessage): Promise<void>;
+    sendDeleteAccountCode(message: DeleteAccountCodeMessage): Promise<void>;
+    sendAccountDeleted(message: AccountDeletedMessage): Promise<void>;
 }
