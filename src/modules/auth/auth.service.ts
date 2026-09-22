@@ -114,12 +114,12 @@ export class AuthService {
         await this.tokensService.revokeRefreshToken(rawRefreshToken);
     }
 
-    async verifyEmail(rawToken: string): Promise<void> {
-        const userId = await this.emailTokensService.consume(rawToken, EmailTokenType.VERIFY_EMAIL);
-        if (!userId) {
-            throw new BadRequestException("Invalid or expired verification token");
+    async verifyEmail(email: string, code: string): Promise<void> {
+        const user = await this.usersService.findByEmail(email);
+        if (!user || !(await this.emailTokensService.consume(user.id, EmailTokenType.VERIFY_EMAIL, code))) {
+            throw new BadRequestException("Invalid or expired verification code");
         }
-        await this.usersService.markEmailVerified(userId);
+        await this.usersService.markEmailVerified(user.id);
     }
 
     async resendVerification(email: string): Promise<void> {
@@ -136,9 +136,8 @@ export class AuthService {
             return; // don't reveal whether the account exists
         }
 
-        const token = await this.emailTokensService.issueResetPasswordToken(user.id);
-        const resetUrl = `${this.configService.get("APP_URL", { infer: true })}/reset-password?token=${token}`;
-        await this.emailSender.sendResetPassword({ to: user.email, resetUrl });
+        const code = await this.emailTokensService.issueResetPasswordToken(user.id);
+        await this.emailSender.sendResetPassword({ to: user.email, code });
     }
 
     /**
@@ -146,16 +145,16 @@ export class AuthService {
      * yet, so completing this reset both sets their password and verifies
      * the account (proving ownership of the invited email address).
      */
-    async resetPassword(rawToken: string, newPassword: string): Promise<void> {
-        const userId = await this.emailTokensService.consume(rawToken, EmailTokenType.RESET_PASSWORD);
-        if (!userId) {
-            throw new BadRequestException("Invalid or expired reset token");
+    async resetPassword(email: string, code: string, newPassword: string): Promise<void> {
+        const user = await this.usersService.findByEmail(email);
+        if (!user || !(await this.emailTokensService.consume(user.id, EmailTokenType.RESET_PASSWORD, code))) {
+            throw new BadRequestException("Invalid or expired reset code");
         }
 
         const passwordHash = await argon2.hash(newPassword);
-        await this.usersService.setPassword(userId, passwordHash);
-        await this.usersService.markEmailVerified(userId);
-        await this.tokensService.revokeAllRefreshTokens(userId);
+        await this.usersService.setPassword(user.id, passwordHash);
+        await this.usersService.markEmailVerified(user.id);
+        await this.tokensService.revokeAllRefreshTokens(user.id);
     }
 
     async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
@@ -266,9 +265,8 @@ export class AuthService {
             role: Role.ADMIN,
         });
 
-        const token = await this.emailTokensService.issueResetPasswordToken(user.id);
-        const resetUrl = `${this.configService.get("APP_URL", { infer: true })}/reset-password?token=${token}`;
-        await this.emailSender.sendResetPassword({ to: user.email, resetUrl });
+        const code = await this.emailTokensService.issueResetPasswordToken(user.id);
+        await this.emailSender.sendResetPassword({ to: user.email, code });
 
         return toPublicUser(user);
     }
@@ -319,9 +317,8 @@ export class AuthService {
     }
 
     private async sendVerificationEmail(userId: string, email: string): Promise<void> {
-        const token = await this.emailTokensService.issueVerifyEmailToken(userId);
-        const verificationUrl = `${this.configService.get("APP_URL", { infer: true })}/verify-email?token=${token}`;
-        await this.emailSender.sendVerifyEmail({ to: email, verificationUrl });
+        const code = await this.emailTokensService.issueVerifyEmailToken(userId);
+        await this.emailSender.sendVerifyEmail({ to: email, code });
     }
 
     private async issueSession(

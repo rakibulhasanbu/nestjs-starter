@@ -2,7 +2,8 @@ import { z } from "zod";
 import { createZodDto } from "nestjs-zod";
 
 export const resetPasswordSchema = z.strictObject({
-    token: z.string().min(1),
+    email: z.email(),
+    code: z.string().regex(/^\d{6}$/),
     password: z.string().min(8).max(72),
 });
 

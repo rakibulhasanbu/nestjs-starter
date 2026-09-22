@@ -90,10 +90,11 @@ model RefreshToken {
 }
 
 model EmailToken {
-    id        String         @id @default(cuid())
-    userId    String         @map("user_id")
-    type      EmailTokenType
-    tokenHash String         @unique @map("token_hash")
+    id       String         @id @default(cuid())
+    userId   String         @map("user_id")
+    type     EmailTokenType
+    codeHash String         @map("code_hash")
+    attempts Int            @default(0)
 
     expiresAt DateTime  @map("expires_at")
     usedAt    DateTime? @map("used_at")
@@ -101,7 +102,7 @@ model EmailToken {
 
     user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-    @@index([userId, type])
+    @@unique([userId, type])
     @@map("email_tokens")
 }
 

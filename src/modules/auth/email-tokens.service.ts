@@ -1,9 +1,11 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { generateOpaqueToken, hashToken } from "@/common/utils/token.util.js";
+import { generateOtpCode, hashToken } from "@/common/utils/token.util.js";
 import type { Env } from "@/config/env.schema.js";
 import { PrismaService } from "@/database/prisma.service.js";
 import { EmailTokenType } from "@/database/generated/prisma/enums.js";
+
+const MAX_ATTEMPTS = 5;
 
 @Injectable()
 export class EmailTokensService {
@@ -13,8 +15,8 @@ export class EmailTokensService {
     ) {}
 
     async issueVerifyEmailToken(userId: string): Promise<string> {
-        const ttlHours = this.configService.get("EMAIL_VERIFICATION_TTL_HOURS", { infer: true });
-        return this.issue(userId, EmailTokenType.VERIFY_EMAIL, ttlHours * 60 * 60 * 1000);
+        const ttlMinutes = this.configService.get("EMAIL_VERIFICATION_TTL_MINUTES", { infer: true });
+        return this.issue(userId, EmailTokenType.VERIFY_EMAIL, ttlMinutes * 60 * 1000);
     }
 
     async issueResetPasswordToken(userId: string): Promise<string> {
@@ -22,28 +24,34 @@ export class EmailTokensService {
         return this.issue(userId, EmailTokenType.RESET_PASSWORD, ttlMinutes * 60 * 1000);
     }
 
-    /** Returns the associated userId if the token is valid, and marks it used. */
-    async consume(rawToken: string, type: EmailTokenType): Promise<string | null> {
-        const tokenHash = hashToken(rawToken);
+    /** Checks the code for this user+type, tracks failed attempts, and marks it used on success. */
+    async consume(userId: string, type: EmailTokenType, code: string): Promise<boolean> {
+        const record = await this.prisma.emailToken.findUnique({ where: { userId_type: { userId, type } } });
 
-        const record = await this.prisma.emailToken.findUnique({ where: { tokenHash } });
+        if (!record || record.usedAt || record.expiresAt < new Date() || record.attempts >= MAX_ATTEMPTS) {
+            return false;
+        }
 
-        if (!record || record.type !== type || record.usedAt || record.expiresAt < new Date()) {
-            return null;
+        if (record.codeHash !== hashToken(code)) {
+            await this.prisma.emailToken.update({ where: { id: record.id }, data: { attempts: { increment: 1 } } });
+            return false;
         }
 
         await this.prisma.emailToken.update({ where: { id: record.id }, data: { usedAt: new Date() } });
 
-        return record.userId;
+        return true;
     }
 
     private async issue(userId: string, type: EmailTokenType, ttlMs: number): Promise<string> {
-        const { token, tokenHash } = generateOpaqueToken();
+        const { code, codeHash } = generateOtpCode();
+        const expiresAt = new Date(Date.now() + ttlMs);
 
-        await this.prisma.emailToken.create({
-            data: { userId, type, tokenHash, expiresAt: new Date(Date.now() + ttlMs) },
+        await this.prisma.emailToken.upsert({
+            where: { userId_type: { userId, type } },
+            create: { userId, type, codeHash, expiresAt },
+            update: { codeHash, expiresAt, usedAt: null, attempts: 0 },
         });
 
-        return token;
+        return code;
     }
 }

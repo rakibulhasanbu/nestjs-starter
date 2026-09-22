@@ -12,11 +12,11 @@ export class ConsoleEmailSender implements EmailSender {
     private readonly logger = new Logger(ConsoleEmailSender.name);
 
     async sendVerifyEmail(message: VerifyEmailMessage): Promise<void> {
-        this.logger.log(`[verify-email] to=${message.to} url=${message.verificationUrl}`);
+        this.logger.log(`[verify-email] to=${message.to} code=${message.code}`);
     }
 
     async sendResetPassword(message: ResetPasswordMessage): Promise<void> {
-        this.logger.log(`[reset-password] to=${message.to} url=${message.resetUrl}`);
+        this.logger.log(`[reset-password] to=${message.to} code=${message.code}`);
     }
 
     async sendAccountLinked(message: AccountLinkedMessage): Promise<void> {

@@ -61,7 +61,7 @@ export class AuthController {
     @HttpCode(HttpStatus.NO_CONTENT)
     @Post("verify-email")
     async verifyEmail(@Body() dto: VerifyEmailDto) {
-        await this.authService.verifyEmail(dto.token);
+        await this.authService.verifyEmail(dto.email, dto.code);
     }
 
     @Public()
@@ -84,7 +84,7 @@ export class AuthController {
     @HttpCode(HttpStatus.NO_CONTENT)
     @Post("reset-password")
     async resetPassword(@Body() dto: ResetPasswordDto) {
-        await this.authService.resetPassword(dto.token, dto.password);
+        await this.authService.resetPassword(dto.email, dto.code, dto.password);
     }
 
     @Public()

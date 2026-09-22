@@ -2,7 +2,8 @@ import { z } from "zod";
 import { createZodDto } from "nestjs-zod";
 
 export const verifyEmailSchema = z.strictObject({
-    token: z.string().min(1),
+    email: z.email(),
+    code: z.string().regex(/^\d{6}$/),
 });
 
 export type VerifyEmailInput = z.infer<typeof verifyEmailSchema>;

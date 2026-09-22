@@ -1,11 +1,11 @@
 export interface VerifyEmailMessage {
     to: string;
-    verificationUrl: string;
+    code: string;
 }
 
 export interface ResetPasswordMessage {
     to: string;
-    resetUrl: string;
+    code: string;
 }
 
 export interface AccountLinkedMessage {

@@ -24,8 +24,8 @@ const baseEnvSchema = z.object({
     JWT_ACCESS_TTL: z.string().default("15m"),
     JWT_REFRESH_TTL: z.string().default("30d"),
 
-    EMAIL_VERIFICATION_TTL_HOURS: z.coerce.number().default(24),
-    PASSWORD_RESET_TTL_MINUTES: z.coerce.number().default(30),
+    EMAIL_VERIFICATION_TTL_MINUTES: z.coerce.number().default(5),
+    PASSWORD_RESET_TTL_MINUTES: z.coerce.number().default(5),
 
     LOGIN_MAX_ATTEMPTS: z.coerce.number().default(5),
     LOGIN_LOCKOUT_MINUTES: z.coerce.number().default(15),
