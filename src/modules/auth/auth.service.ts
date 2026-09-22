@@ -119,13 +119,18 @@ export class AuthService {
     }
 
     /** Verifying implies the user just proved control of the account, so it also signs them in. */
-    async verifyEmail(email: string, code: string, context: LoginContext) {
+    async verifyEmail(
+        email: string,
+        code: string,
+        context: LoginContext,
+        explicitDevice?: { deviceType?: string; deviceName?: string },
+    ) {
         const user = await this.usersService.findByEmail(email);
         if (!user || !(await this.emailTokensService.consume(user.id, EmailTokenType.VERIFY_EMAIL, code))) {
             throw new BadRequestException("Invalid or expired verification code");
         }
         await this.usersService.markEmailVerified(user.id);
-        return this.issueSession(user.id, user.email, user.role, context);
+        return this.issueSession(user.id, user.email, user.role, context, explicitDevice);
     }
 
     async resendVerification(email: string): Promise<void> {
@@ -155,7 +160,13 @@ export class AuthService {
      *
      * Consuming the code proves account ownership, so this also signs the user in.
      */
-    async resetPassword(email: string, code: string, newPassword: string, context: LoginContext) {
+    async resetPassword(
+        email: string,
+        code: string,
+        newPassword: string,
+        context: LoginContext,
+        explicitDevice?: { deviceType?: string; deviceName?: string },
+    ) {
         const user = await this.usersService.findByEmail(email);
         if (!user || !(await this.emailTokensService.consume(user.id, EmailTokenType.RESET_PASSWORD, code))) {
             throw new BadRequestException("Invalid or expired reset code");
@@ -165,7 +176,7 @@ export class AuthService {
         await this.usersService.setPassword(user.id, passwordHash);
         await this.usersService.markEmailVerified(user.id);
         await this.tokensService.revokeAllRefreshTokens(user.id);
-        return this.issueSession(user.id, user.email, user.role, context);
+        return this.issueSession(user.id, user.email, user.role, context, explicitDevice);
     }
 
     async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
@@ -181,6 +192,11 @@ export class AuthService {
         const passwordValid = await argon2.verify(user.password, currentPassword);
         if (!passwordValid) {
             throw new UnauthorizedException("Current password is incorrect");
+        }
+
+        const isSamePassword = await argon2.verify(user.password, newPassword);
+        if (isSamePassword) {
+            throw new BadRequestException("New password must be different from the current password");
         }
 
         const passwordHash = await argon2.hash(newPassword);

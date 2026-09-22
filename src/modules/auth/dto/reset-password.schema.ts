@@ -5,6 +5,8 @@ export const resetPasswordSchema = z.strictObject({
     email: z.email(),
     code: z.string().regex(/^\d{6}$/),
     password: z.string().min(8).max(72),
+    deviceType: z.string().min(1).max(50).optional(),
+    deviceName: z.string().min(1).max(100).optional(),
 });
 
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
