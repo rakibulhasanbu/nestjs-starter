@@ -58,10 +58,13 @@ export class AuthController {
     }
 
     @Public()
-    @HttpCode(HttpStatus.NO_CONTENT)
+    @HttpCode(HttpStatus.OK)
     @Post("verify-email")
-    async verifyEmail(@Body() dto: VerifyEmailDto) {
-        await this.authService.verifyEmail(dto.email, dto.code);
+    verifyEmail(@Body() dto: VerifyEmailDto, @Req() req: Request) {
+        return this.authService.verifyEmail(dto.email, dto.code, {
+            userAgent: req.headers["user-agent"],
+            ipAddress: req.ip,
+        });
     }
 
     @Public()
@@ -81,10 +84,13 @@ export class AuthController {
     }
 
     @Public()
-    @HttpCode(HttpStatus.NO_CONTENT)
+    @HttpCode(HttpStatus.OK)
     @Post("reset-password")
-    async resetPassword(@Body() dto: ResetPasswordDto) {
-        await this.authService.resetPassword(dto.email, dto.code, dto.password);
+    resetPassword(@Body() dto: ResetPasswordDto, @Req() req: Request) {
+        return this.authService.resetPassword(dto.email, dto.code, dto.password, {
+            userAgent: req.headers["user-agent"],
+            ipAddress: req.ip,
+        });
     }
 
     @Public()
