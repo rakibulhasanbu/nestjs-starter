@@ -19,6 +19,10 @@ import { DeleteAccountDto } from "@/modules/auth/dto/delete-account.schema.js";
 import { WebauthnRegisterVerifyDto } from "@/modules/auth/dto/webauthn-register-verify.schema.js";
 import { WebauthnLoginOptionsDto } from "@/modules/auth/dto/webauthn-login-options.schema.js";
 import { WebauthnLoginVerifyDto } from "@/modules/auth/dto/webauthn-login-verify.schema.js";
+import { WebauthnLoginUsernamelessVerifyDto } from "@/modules/auth/dto/webauthn-login-usernameless-verify.schema.js";
+import { TwoFactorEnableDto } from "@/modules/auth/dto/two-factor-enable.schema.js";
+import { TwoFactorDisableDto } from "@/modules/auth/dto/two-factor-disable.schema.js";
+import { TwoFactorLoginVerifyDto } from "@/modules/auth/dto/two-factor-login-verify.schema.js";
 import type { RegistrationResponseJSON, AuthenticationResponseJSON } from "@simplewebauthn/server";
 
 @Controller("auth")
@@ -190,6 +194,25 @@ export class AuthController {
         });
     }
 
+    @Public()
+    @Throttle({ default: { limit: 10, ttl: 60_000 } })
+    @HttpCode(HttpStatus.OK)
+    @Post("webauthn/login/usernameless/options")
+    getUsernamelessWebauthnLoginOptions() {
+        return this.authService.getUsernamelessWebauthnLoginOptions();
+    }
+
+    @Public()
+    @Throttle({ default: { limit: 10, ttl: 60_000 } })
+    @HttpCode(HttpStatus.OK)
+    @Post("webauthn/login/usernameless/verify")
+    loginWithWebauthnUsernameless(@Body() dto: WebauthnLoginUsernamelessVerifyDto, @Req() req: Request) {
+        return this.authService.loginWithWebauthnUsernameless(dto.credential as unknown as AuthenticationResponseJSON, {
+            userAgent: req.headers["user-agent"],
+            ipAddress: req.ip,
+        });
+    }
+
     @Get("webauthn/credentials")
     listWebauthnCredentials(@CurrentUser() currentUser: AuthenticatedUser) {
         return this.authService.listWebauthnCredentials(currentUser.id);
@@ -202,5 +225,34 @@ export class AuthController {
         @Param("credentialId") credentialId: string,
     ) {
         return this.authService.removeWebauthnCredential(currentUser.id, credentialId);
+    }
+
+    @HttpCode(HttpStatus.OK)
+    @Post("2fa/setup")
+    setupTwoFactor(@CurrentUser() currentUser: AuthenticatedUser) {
+        return this.authService.setupTwoFactor(currentUser.id);
+    }
+
+    @HttpCode(HttpStatus.OK)
+    @Post("2fa/enable")
+    enableTwoFactor(@CurrentUser() currentUser: AuthenticatedUser, @Body() dto: TwoFactorEnableDto) {
+        return this.authService.enableTwoFactor(currentUser.id, dto.code);
+    }
+
+    @HttpCode(HttpStatus.NO_CONTENT)
+    @Post("2fa/disable")
+    async disableTwoFactor(@CurrentUser() currentUser: AuthenticatedUser, @Body() dto: TwoFactorDisableDto) {
+        await this.authService.disableTwoFactor(currentUser.id, dto.password, dto.code);
+    }
+
+    @Public()
+    @Throttle({ default: { limit: 10, ttl: 60_000 } })
+    @HttpCode(HttpStatus.OK)
+    @Post("2fa/login-verify")
+    loginWithTwoFactor(@Body() dto: TwoFactorLoginVerifyDto, @Req() req: Request) {
+        return this.authService.loginWithTwoFactor(dto.twoFactorToken, dto.code, dto.recoveryCode, {
+            userAgent: req.headers["user-agent"],
+            ipAddress: req.ip,
+        });
     }
 }

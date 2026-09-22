@@ -40,6 +40,10 @@ const baseEnvSchema = z.object({
     WEBAUTHN_ORIGIN: z.url().default("http://localhost:3000"),
     WEBAUTHN_CHALLENGE_TTL_MINUTES: z.coerce.number().default(5),
 
+    TWO_FACTOR_APP_NAME: z.string().min(1).default("Nest Starter"),
+    TWO_FACTOR_ENCRYPTION_KEY: z.string().length(64, "TWO_FACTOR_ENCRYPTION_KEY must be a 32-byte hex string"),
+    TWO_FACTOR_LOGIN_TTL: z.string().default("5m"),
+
     ADMIN_EMAIL: z.email(),
     ADMIN_PASSWORD: z.string().min(8),
 });

@@ -100,6 +100,43 @@ export class WebauthnService {
             throw new UnauthorizedException("Passkey not recognized");
         }
 
+        await this.assertCredential(credential, stored, challenge);
+    }
+
+    /** No email needed — the platform authenticator resolves which discoverable credential/account to use. */
+    async createUsernamelessAuthenticationOptions() {
+        const options = await generateAuthenticationOptions({
+            rpID: this.configService.get("WEBAUTHN_RP_ID", { infer: true }),
+            allowCredentials: [],
+            userVerification: "required",
+        });
+
+        await this.storeChallenge(null, options.challenge, "authentication");
+        return options;
+    }
+
+    /** Resolves the user from the credential id in the assertion itself — returns the userId to the caller. */
+    async verifyUsernamelessAuthentication(credential: AuthenticationResponseJSON): Promise<{ userId: string }> {
+        const challengeValue = this.decodeAssertionChallenge(credential);
+        const challenge = await this.consumeChallengeByValue(challengeValue, "authentication");
+        if (!challenge) {
+            throw new UnauthorizedException("Authentication challenge expired — please try again");
+        }
+
+        const stored = await this.webauthnCredentials.findByCredentialId(credential.id);
+        if (!stored) {
+            throw new UnauthorizedException("Passkey not recognized");
+        }
+
+        await this.assertCredential(credential, stored, challenge);
+        return { userId: stored.userId };
+    }
+
+    private async assertCredential(
+        credential: AuthenticationResponseJSON,
+        stored: { id: string; credentialId: string; publicKey: Uint8Array; counter: bigint; transports: string[] },
+        challenge: string,
+    ): Promise<void> {
         const verification = await verifyAuthenticationResponse({
             response: credential,
             expectedChallenge: challenge,
@@ -120,10 +157,20 @@ export class WebauthnService {
         await this.webauthnCredentials.updateCounter(stored.id, verification.authenticationInfo.newCounter);
     }
 
-    /** One active challenge per user/type — a fresh options call invalidates any earlier, unfinished attempt. */
-    private async storeChallenge(userId: string, challenge: string, type: "registration" | "authentication") {
+    private decodeAssertionChallenge(credential: AuthenticationResponseJSON): string {
+        const clientDataJSON = JSON.parse(
+            Buffer.from(credential.response.clientDataJSON, "base64url").toString("utf8"),
+        ) as { challenge: string };
+        return clientDataJSON.challenge;
+    }
+
+    /** One active challenge per user/type — a fresh options call invalidates any earlier, unfinished attempt.
+     *  A null userId (usernameless flow) skips invalidation since many anonymous attempts can be in flight at once. */
+    private async storeChallenge(userId: string | null, challenge: string, type: "registration" | "authentication") {
         const ttlMinutes = this.configService.get("WEBAUTHN_CHALLENGE_TTL_MINUTES", { infer: true });
-        await this.prisma.webauthnChallenge.deleteMany({ where: { userId, type } });
+        if (userId) {
+            await this.prisma.webauthnChallenge.deleteMany({ where: { userId, type } });
+        }
         await this.prisma.webauthnChallenge.create({
             data: { userId, challenge, type, expiresAt: new Date(Date.now() + ttlMinutes * 60 * 1000) },
         });
@@ -136,6 +183,20 @@ export class WebauthnService {
         });
 
         if (!record || record.expiresAt < new Date()) {
+            return null;
+        }
+
+        await this.prisma.webauthnChallenge.delete({ where: { id: record.id } });
+        return record.challenge;
+    }
+
+    private async consumeChallengeByValue(
+        challenge: string,
+        type: "registration" | "authentication",
+    ): Promise<string | null> {
+        const record = await this.prisma.webauthnChallenge.findUnique({ where: { challenge } });
+
+        if (!record || record.type !== type || record.expiresAt < new Date()) {
             return null;
         }
 

@@ -12,6 +12,7 @@ import { GoogleAuthService } from "@/modules/auth/google-auth.service.js";
 import { SocialIdentitiesService } from "@/modules/auth/social-identities.service.js";
 import { WebauthnService } from "@/modules/auth/webauthn.service.js";
 import { WebauthnCredentialsService } from "@/modules/auth/webauthn-credentials.service.js";
+import { TwoFactorService } from "@/modules/auth/two-factor.service.js";
 import type { SignupInput } from "@/modules/auth/dto/signup.schema.js";
 import type { SigninInput } from "@/modules/auth/dto/signin.schema.js";
 import { TokensService } from "@/modules/auth/tokens.service.js";
@@ -33,6 +34,7 @@ export class AuthService {
         private readonly googleAuthService: GoogleAuthService,
         private readonly webauthnService: WebauthnService,
         private readonly webauthnCredentialsService: WebauthnCredentialsService,
+        private readonly twoFactorService: TwoFactorService,
         private readonly configService: ConfigService<Env, true>,
         @Inject(EMAIL_SENDER) private readonly emailSender: EmailSender,
     ) {}
@@ -95,6 +97,10 @@ export class AuthService {
         }
 
         await this.usersService.resetFailedLogin(user.id);
+
+        if (user.twoFactorEnabled) {
+            return { twoFactorRequired: true as const, twoFactorToken: this.tokensService.signTwoFactorToken(user.id) };
+        }
 
         return this.issueSession(user.id, user.email, user.role, context, {
             deviceType: input.deviceType,
@@ -367,6 +373,21 @@ export class AuthService {
         return this.issueSession(user.id, user.email, user.role, context);
     }
 
+    getUsernamelessWebauthnLoginOptions() {
+        return this.webauthnService.createUsernamelessAuthenticationOptions();
+    }
+
+    async loginWithWebauthnUsernameless(credential: AuthenticationResponseJSON, context: LoginContext) {
+        const { userId } = await this.webauthnService.verifyUsernamelessAuthentication(credential);
+
+        const user = await this.usersService.findById(userId);
+        if (!user || user.deletedAt || user.status === UserStatus.SUSPENDED) {
+            throw new UnauthorizedException("This account is not available");
+        }
+
+        return this.issueSession(user.id, user.email, user.role, context);
+    }
+
     async listWebauthnCredentials(userId: string) {
         const credentials = await this.webauthnCredentialsService.listByUserId(userId);
         return credentials.map(({ publicKey: _publicKey, counter: _counter, ...credential }) => credential);
@@ -374,6 +395,62 @@ export class AuthService {
 
     async removeWebauthnCredential(userId: string, credentialId: string): Promise<void> {
         await this.webauthnCredentialsService.remove(userId, credentialId);
+    }
+
+    async setupTwoFactor(userId: string) {
+        const user = await this.usersService.findById(userId);
+        if (!user || user.deletedAt) {
+            throw new UnauthorizedException("Invalid credentials");
+        }
+        return this.twoFactorService.setup(user.id, user.email);
+    }
+
+    async enableTwoFactor(userId: string, code: string) {
+        return this.twoFactorService.enable(userId, code);
+    }
+
+    async disableTwoFactor(userId: string, password: string, code: string): Promise<void> {
+        const user = await this.usersService.findById(userId);
+        if (!user || user.deletedAt || !user.password) {
+            throw new UnauthorizedException("Invalid credentials");
+        }
+
+        const passwordValid = await argon2.verify(user.password, password);
+        if (!passwordValid) {
+            throw new UnauthorizedException("Incorrect password");
+        }
+
+        const codeValid = await this.twoFactorService.verifyCode(userId, code);
+        if (!codeValid) {
+            throw new BadRequestException("Invalid authenticator code");
+        }
+
+        await this.twoFactorService.disable(userId);
+    }
+
+    /** Second step of a two-factor login — exchanges the short-lived token from signin() plus a TOTP or recovery code for a session. */
+    async loginWithTwoFactor(
+        twoFactorToken: string,
+        code: string | undefined,
+        recoveryCode: string | undefined,
+        context: LoginContext,
+        explicitDevice?: { deviceType?: string; deviceName?: string },
+    ) {
+        const userId = this.tokensService.verifyTwoFactorToken(twoFactorToken);
+        const user = await this.usersService.findById(userId);
+        if (!user || user.deletedAt || user.status !== UserStatus.ACTIVE) {
+            throw new UnauthorizedException("This account is not available");
+        }
+
+        const verified = recoveryCode
+            ? await this.twoFactorService.verifyRecoveryCode(user.id, recoveryCode)
+            : await this.twoFactorService.verifyCode(user.id, code!);
+
+        if (!verified) {
+            throw new UnauthorizedException("Invalid two-factor code");
+        }
+
+        return this.issueSession(user.id, user.email, user.role, context, explicitDevice);
     }
 
     private async sendVerificationEmail(userId: string, email: string): Promise<void> {

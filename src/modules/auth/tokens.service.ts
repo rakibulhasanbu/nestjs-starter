@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import ms from "ms";
@@ -104,5 +104,30 @@ export class TokensService {
             where: { id: sessionId, userId, revokedAt: null },
             data: { revokedAt: new Date() },
         });
+    }
+
+    /** Short-lived token proving a password check passed, so a 2FA code can be requested next without re-authenticating. */
+    signTwoFactorToken(userId: string): string {
+        return this.jwtService.sign(
+            { sub: userId, purpose: "2fa" },
+            {
+                secret: this.configService.get("JWT_ACCESS_SECRET", { infer: true }),
+                expiresIn: this.configService.get("TWO_FACTOR_LOGIN_TTL", { infer: true }),
+            },
+        );
+    }
+
+    verifyTwoFactorToken(token: string): string {
+        try {
+            const payload = this.jwtService.verify<{ sub: string; purpose: string }>(token, {
+                secret: this.configService.get("JWT_ACCESS_SECRET", { infer: true }),
+            });
+            if (payload.purpose !== "2fa") {
+                throw new UnauthorizedException("Invalid two-factor token");
+            }
+            return payload.sub;
+        } catch {
+            throw new UnauthorizedException("Invalid or expired two-factor token");
+        }
     }
 }

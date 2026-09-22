@@ -11,6 +11,7 @@ import { GoogleAuthService } from "@/modules/auth/google-auth.service.js";
 import { SocialIdentitiesService } from "@/modules/auth/social-identities.service.js";
 import { WebauthnService } from "@/modules/auth/webauthn.service.js";
 import { WebauthnCredentialsService } from "@/modules/auth/webauthn-credentials.service.js";
+import { TwoFactorService } from "@/modules/auth/two-factor.service.js";
 import { JwtStrategy } from "@/modules/auth/strategies/jwt.strategy.js";
 
 @Module({
@@ -24,6 +25,7 @@ import { JwtStrategy } from "@/modules/auth/strategies/jwt.strategy.js";
         GoogleAuthService,
         WebauthnService,
         WebauthnCredentialsService,
+        TwoFactorService,
         JwtStrategy,
     ],
     exports: [TokensService, EmailTokensService, AuthService],

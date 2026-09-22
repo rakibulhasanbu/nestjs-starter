@@ -18,3 +18,8 @@ export function generateOtpCode(): { code: string; codeHash: string } {
 export function hashToken(token: string): string {
     return createHash("sha256").update(token).digest("hex");
 }
+
+/** One-time 2FA recovery codes, meant for the user to store offline. Only hashes are persisted. */
+export function generateRecoveryCodes(count = 8): string[] {
+    return Array.from({ length: count }, () => randomBytes(5).toString("hex").toUpperCase());
+}
