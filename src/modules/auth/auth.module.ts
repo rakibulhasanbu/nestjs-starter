@@ -12,6 +12,7 @@ import { SocialIdentitiesService } from "@/modules/auth/social-identities.servic
 import { WebauthnService } from "@/modules/auth/webauthn.service.js";
 import { WebauthnCredentialsService } from "@/modules/auth/webauthn-credentials.service.js";
 import { TwoFactorService } from "@/modules/auth/two-factor.service.js";
+import { AuthCleanupTask } from "@/modules/auth/auth-cleanup.task.js";
 import { JwtStrategy } from "@/modules/auth/strategies/jwt.strategy.js";
 
 @Module({
@@ -26,6 +27,7 @@ import { JwtStrategy } from "@/modules/auth/strategies/jwt.strategy.js";
         WebauthnService,
         WebauthnCredentialsService,
         TwoFactorService,
+        AuthCleanupTask,
         JwtStrategy,
     ],
     exports: [TokensService, EmailTokensService, AuthService],

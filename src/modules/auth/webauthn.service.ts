@@ -132,6 +132,15 @@ export class WebauthnService {
         return { userId: stored.userId };
     }
 
+    /** Removes challenges nobody can still answer; returns how many were deleted. */
+    async purgeExpiredChallenges(): Promise<number> {
+        const { count } = await this.prisma.webauthnChallenge.deleteMany({
+            where: { expiresAt: { lt: new Date() } },
+        });
+
+        return count;
+    }
+
     private async assertCredential(
         credential: AuthenticationResponseJSON,
         stored: { id: string; credentialId: string; publicKey: Uint8Array; counter: bigint; transports: string[] },

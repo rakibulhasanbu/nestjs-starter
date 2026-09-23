@@ -22,7 +22,6 @@ export interface PermissionDefinition {
 export const PERMISSIONS = {
     USER_READ_ANY: "user:read:any",
     USER_UPDATE_ANY: "user:update:any",
-    USER_DELETE_ANY: "user:delete:any",
     USER_RESTORE_ANY: "user:restore:any",
     USER_STATUS_ANY: "user:status:any",
     USER_INVITE: "user:invite",
@@ -56,18 +55,11 @@ export const PERMISSION_CATALOG: readonly PermissionDefinition[] = [
         description: "Edit any user's profile fields",
     },
     {
-        key: PERMISSIONS.USER_DELETE_ANY,
-        resource: "user",
-        action: "delete",
-        scope: "any",
-        description: "Soft-delete any user account",
-    },
-    {
         key: PERMISSIONS.USER_RESTORE_ANY,
         resource: "user",
         action: "restore",
         scope: "any",
-        description: "Restore a soft-deleted user account",
+        description: "Restore an account the owner deleted, while its grace period lasts",
     },
     {
         key: PERMISSIONS.USER_STATUS_ANY,

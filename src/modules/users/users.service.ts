@@ -106,10 +106,21 @@ export class UsersService {
         return candidate;
     }
 
-    markEmailVerified(id: string): Promise<UserWithRoles> {
+    /**
+     * Promotes PENDING_VERIFICATION to ACTIVE, and only that. A SUSPENDED account
+     * must stay suspended: this runs at the end of the email-verification and
+     * password-reset flows, so unconditionally writing ACTIVE would turn either
+     * flow into a way for a suspended user to lift their own suspension.
+     */
+    async markEmailVerified(id: string): Promise<UserWithRoles> {
+        const current = await this.prisma.user.findUniqueOrThrow({ where: { id }, select: { status: true } });
+
         return this.prisma.user.update({
             where: { id },
-            data: { emailVerifiedAt: new Date(), status: UserStatus.ACTIVE },
+            data: {
+                emailVerifiedAt: new Date(),
+                status: current.status === UserStatus.PENDING_VERIFICATION ? UserStatus.ACTIVE : undefined,
+            },
             include: withRoles,
         });
     }
@@ -158,6 +169,12 @@ export class UsersService {
         });
     }
 
+    /**
+     * `visibleTo` applies the same rule the single-record admin routes enforce: an
+     * actor sees only accounts ranked below their own, plus themselves. Without it
+     * the list happily returned the super admin to any admin who asked, while
+     * fetching that same account by id answered 403.
+     */
     async list(params: {
         page: number;
         limit: number;
@@ -165,9 +182,18 @@ export class UsersService {
         roleId?: string;
         status?: UserStatus;
         deleted?: boolean;
+        visibleTo: { actorId: string; maxRank: number };
     }): Promise<{ items: UserWithRoles[]; total: number }> {
         const where = {
             deletedAt: params.deleted ? { not: null } : null,
+            AND: [
+                {
+                    OR: [
+                        { id: params.visibleTo.actorId },
+                        { roles: { none: { role: { rank: { gte: params.visibleTo.maxRank } } } } },
+                    ],
+                },
+            ],
             ...(params.roleId ? { roles: { some: { roleId: params.roleId } } } : {}),
             ...(params.status ? { status: params.status } : {}),
             ...(params.search
@@ -195,11 +221,26 @@ export class UsersService {
         return { items, total };
     }
 
+    /**
+     * `resetEmailVerification` is set when the email address itself changed: the
+     * new address is unproven, and leaving `emailVerifiedAt` in place would treat
+     * it as confirmed — including for password-reset delivery.
+     */
     updateByAdmin(
         id: string,
         data: Partial<Pick<UserModel, "name" | "username" | "email" | "phone" | "avatarUrl">>,
+        options: { resetEmailVerification?: boolean } = {},
     ): Promise<UserWithRoles> {
-        return this.prisma.user.update({ where: { id }, data, include: withRoles });
+        return this.prisma.user.update({
+            where: { id },
+            data: {
+                ...data,
+                ...(options.resetEmailVerification
+                    ? { emailVerifiedAt: null, status: UserStatus.PENDING_VERIFICATION }
+                    : {}),
+            },
+            include: withRoles,
+        });
     }
 
     updateStatus(id: string, status: UserStatus): Promise<UserWithRoles> {
@@ -214,7 +255,13 @@ export class UsersService {
         return this.prisma.user.update({ where: { id }, data: { deletedAt: null }, include: withRoles });
     }
 
-    /** Hard-deletes soft-deleted users whose grace period has expired. */
+    /**
+     * Hard-deletes soft-deleted users whose grace period has expired, which is
+     * also what frees their unique email and username for reuse. Cascades take
+     * the profile, roles, tokens and identities with them — any table added
+     * later that must outlive the account (orders, audit rows) has to either
+     * detach from `users` or be anonymized here instead.
+     */
     async purgeExpiredDeleted(graceDays: number): Promise<number> {
         const cutoff = new Date(Date.now() - graceDays * 24 * 60 * 60 * 1000);
         const { count } = await this.prisma.user.deleteMany({

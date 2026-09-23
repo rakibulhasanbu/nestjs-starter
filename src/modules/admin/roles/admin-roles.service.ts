@@ -93,7 +93,11 @@ export class AdminRolesService {
             throw new ForbiddenException("A system role's name and rank cannot be changed");
         }
 
-        this.assertRankBelowActor(actor, data.rank ?? role.rank);
+        this.assertManageableRole(actor, role);
+
+        if (data.rank !== undefined) {
+            this.assertRankBelowActor(actor, data.rank);
+        }
 
         if (data.permissions) {
             this.assertGrantable(actor, data.permissions);
@@ -135,7 +139,7 @@ export class AdminRolesService {
             throw new ForbiddenException("A system role cannot be deleted");
         }
 
-        this.assertRankBelowActor(actor, role.rank);
+        this.assertManageableRole(actor, role);
 
         if (role._count.users > 0) {
             throw new ConflictException("Remove this role from all users before deleting it");
@@ -145,8 +149,27 @@ export class AdminRolesService {
     }
 
     /**
-     * Nobody may create or edit a role at or above their own rank — otherwise an
-     * admin could mint a role outranking themselves and assign it onward.
+     * Which existing roles an actor may touch.
+     *
+     * A role the actor holds is always editable: `assertGrantable` already caps
+     * its contents at what the actor themselves has, so this cannot lift their
+     * own ceiling. Requiring a strictly lower rank here instead left the super
+     * admin — rank 100, holding the rank-100 role — unable to edit the one role
+     * they own, even though the permission set is meant to stay editable.
+     *
+     * Every other role must still sit strictly below them.
+     */
+    private assertManageableRole(actor: AuthenticatedUser, role: { id: string; rank: number }): void {
+        if (actor.roleIds.includes(role.id)) {
+            return;
+        }
+
+        this.assertRankBelowActor(actor, role.rank);
+    }
+
+    /**
+     * Nobody may create a role, or move one, to at or above their own rank —
+     * otherwise an admin could mint a role outranking themselves and assign it onward.
      */
     private assertRankBelowActor(actor: AuthenticatedUser, rank: number): void {
         if (rank >= actor.maxRank) {

@@ -31,6 +31,18 @@
 $ pnpm install
 ```
 
+`postinstall` runs `prisma generate`, so the client under `src/database/generated`
+(git-ignored) is built for you. Then copy the environment file and apply migrations:
+
+```bash
+$ cp .env.example .env
+$ pnpm run db:migrate
+$ pnpm run db:seed
+```
+
+Requires a running PostgreSQL and Redis — the e2e suite boots the real
+application graph and needs both.
+
 ## Compile and run the project
 
 ```bash
@@ -50,7 +62,7 @@ $ pnpm run start:prod
 # unit tests
 $ pnpm run test
 
-# e2e tests
+# e2e tests (needs PostgreSQL + Redis + a migrated database)
 $ pnpm run test:e2e
 
 # test coverage

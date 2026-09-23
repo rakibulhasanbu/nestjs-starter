@@ -45,9 +45,15 @@ async function syncPermissions(prisma: Db): Promise<void> {
 /**
  * Upserts the roles the application itself depends on. Their permission sets are
  * rewritten from code on every run; roles created through the API are untouched.
+ *
+ * Returns the roles whose permission set actually changed. Bumping permVersion
+ * unconditionally invalidated every access token in the system on every run —
+ * and since each account carries the `user` role, that meant logging out the
+ * entire user base on each deploy, whether or not anything had moved.
  */
-async function syncSystemRoles(prisma: Db): Promise<void> {
+async function syncSystemRoles(prisma: Db): Promise<string[]> {
     const allKeys = PERMISSION_CATALOG.map(permission => permission.key);
+    const changedRoleIds: string[] = [];
 
     for (const definition of SYSTEM_ROLES) {
         const permissions = definition.permissions === null ? allKeys : [...definition.permissions];
@@ -69,6 +75,18 @@ async function syncSystemRoles(prisma: Db): Promise<void> {
             },
         });
 
+        // Read before writing: comparing the stored set with the desired one is
+        // what tells us whether anyone's access actually moved. Note this runs
+        // after syncPermissions, so keys retired from the catalog have already
+        // cascaded out of the table and show up here as a difference.
+        const stored = await prisma.rolePermission.findMany({
+            where: { roleId: definition.id },
+            select: { permissionKey: true },
+        });
+        const storedKeys = new Set(stored.map(({ permissionKey }) => permissionKey));
+        const changed =
+            storedKeys.size !== permissions.length || permissions.some(permission => !storedKeys.has(permission));
+
         await prisma.rolePermission.deleteMany({
             where: { roleId: definition.id, permissionKey: { notIn: permissions } },
         });
@@ -77,14 +95,28 @@ async function syncSystemRoles(prisma: Db): Promise<void> {
             skipDuplicates: true,
         });
 
-        console.log(`Role ready: ${definition.id} (${permissions.length} permissions)`);
+        if (changed) {
+            changedRoleIds.push(definition.id);
+        }
+
+        console.log(`Role ready: ${definition.id} (${permissions.length} permissions)${changed ? " — changed" : ""}`);
     }
 
-    // Anyone holding a system role may have just gained or lost permissions.
-    await prisma.user.updateMany({
-        where: { roles: { some: { roleId: { in: SYSTEM_ROLES.map(role => role.id) } } } },
+    return changedRoleIds;
+}
+
+/** Invalidates the access tokens of everyone holding a role whose permissions moved. */
+async function bumpAffectedUsers(prisma: Db, roleIds: string[]): Promise<number> {
+    if (roleIds.length === 0) {
+        return 0;
+    }
+
+    const { count } = await prisma.user.updateMany({
+        where: { roles: { some: { roleId: { in: roleIds } } } },
         data: { permVersion: { increment: 1 } },
     });
+
+    return count;
 }
 
 /**
@@ -128,7 +160,7 @@ async function flushPermissionCache(redisUrl: string): Promise<void> {
  * ever be created — there is no API path, and a partial unique index on
  * user_roles enforces that at most one account holds the role.
  */
-async function seedSuperAdmin(prisma: Db, email: string, password: string): Promise<void> {
+async function seedSuperAdmin(prisma: Db, email: string, password: string): Promise<boolean> {
     const existing = await prisma.userRole.findFirst({
         where: { roleId: SYSTEM_ROLE_IDS.SUPER_ADMIN },
         include: { user: true },
@@ -154,7 +186,7 @@ async function seedSuperAdmin(prisma: Db, email: string, password: string): Prom
         },
     });
 
-    await prisma.userRole.createMany({
+    const { count } = await prisma.userRole.createMany({
         data: [
             { userId: user.id, roleId: SYSTEM_ROLE_IDS.USER },
             { userId: user.id, roleId: SYSTEM_ROLE_IDS.SUPER_ADMIN },
@@ -163,6 +195,9 @@ async function seedSuperAdmin(prisma: Db, email: string, password: string): Prom
     });
 
     console.log(`Super admin ready: ${user.email}`);
+
+    // Newly granted roles mean this account's cached permission set is stale.
+    return count > 0;
 }
 
 async function main() {
@@ -173,9 +208,19 @@ async function main() {
     });
 
     await syncPermissions(prisma);
-    await syncSystemRoles(prisma);
-    await seedSuperAdmin(prisma, env.ADMIN_EMAIL, env.ADMIN_PASSWORD);
-    await flushPermissionCache(env.REDIS_URL);
+    const changedRoleIds = await syncSystemRoles(prisma);
+    const superAdminChanged = await seedSuperAdmin(prisma, env.ADMIN_EMAIL, env.ADMIN_PASSWORD);
+
+    const bumped = await bumpAffectedUsers(prisma, changedRoleIds);
+    if (bumped > 0) {
+        console.log(`Access tokens invalidated for ${bumped} user(s) whose permissions changed`);
+    }
+
+    if (bumped > 0 || superAdminChanged) {
+        await flushPermissionCache(env.REDIS_URL);
+    } else {
+        console.log("Nothing changed — running sessions left alone");
+    }
 
     await prisma.$disconnect();
 }

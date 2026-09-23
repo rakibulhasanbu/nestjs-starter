@@ -46,7 +46,6 @@ export const SYSTEM_ROLES: readonly SystemRoleDefinition[] = [
         permissions: [
             PERMISSIONS.USER_READ_ANY,
             PERMISSIONS.USER_UPDATE_ANY,
-            PERMISSIONS.USER_DELETE_ANY,
             PERMISSIONS.USER_RESTORE_ANY,
             PERMISSIONS.USER_STATUS_ANY,
             PERMISSIONS.USER_PASSWORD_RESET_ANY,

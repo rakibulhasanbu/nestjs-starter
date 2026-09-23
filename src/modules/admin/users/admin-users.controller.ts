@@ -16,8 +16,8 @@ export class AdminUsersController {
 
     @RequirePermissions(PERMISSIONS.USER_READ_ANY)
     @Get()
-    list(@Query() query: ListUsersDto) {
-        return this.adminUsersService.list(query);
+    list(@CurrentUser() actor: AuthenticatedUser, @Query() query: ListUsersDto) {
+        return this.adminUsersService.list(actor, query);
     }
 
     @RequirePermissions(PERMISSIONS.USER_READ_ANY)
@@ -44,12 +44,10 @@ export class AdminUsersController {
         return this.adminUsersService.updateStatus(actor, id, dto.status);
     }
 
-    @RequirePermissions(PERMISSIONS.USER_DELETE_ANY)
-    @Delete(":id")
-    softDelete(@CurrentUser() actor: AuthenticatedUser, @Param("id") id: string) {
-        return this.adminUsersService.softDelete(actor, id);
-    }
-
+    /**
+     * Deletion is self-service only, so this is a support tool: it undoes a
+     * deletion the owner asked for, never one an admin performed.
+     */
     @RequirePermissions(PERMISSIONS.USER_RESTORE_ANY)
     @Post(":id/restore")
     restore(@CurrentUser() actor: AuthenticatedUser, @Param("id") id: string) {

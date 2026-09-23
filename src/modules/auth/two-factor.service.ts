@@ -14,7 +14,12 @@ export class TwoFactorService {
         private readonly configService: ConfigService<Env, true>,
     ) {}
 
-    /** Generates a new secret and stores it (disabled) until confirmed via enable(). */
+    /**
+     * Generates a new secret and stores it until confirmed via enable(). Only
+     * reachable while 2FA is off (the caller enforces that), and deliberately
+     * never writes `twoFactorEnabled` — flipping it off here would be a way to
+     * drop 2FA without the password and live code that disable() requires.
+     */
     async setup(userId: string, email: string): Promise<{ otpauthUrl: string; qrCodeDataUrl: string }> {
         const secret = authenticator.generateSecret();
         const otpauthUrl = authenticator.keyuri(
@@ -25,7 +30,7 @@ export class TwoFactorService {
 
         await this.prisma.user.update({
             where: { id: userId },
-            data: { twoFactorSecret: encrypt(secret, this.getEncryptionKey()), twoFactorEnabled: false },
+            data: { twoFactorSecret: encrypt(secret, this.getEncryptionKey()) },
         });
 
         const qrCodeDataUrl = await QRCode.toDataURL(otpauthUrl);
@@ -47,7 +52,12 @@ export class TwoFactorService {
         const recoveryCodes = generateRecoveryCodes();
         await this.prisma.user.update({
             where: { id: userId },
-            data: { twoFactorEnabled: true, twoFactorRecoveryCodes: recoveryCodes.map(hashToken) },
+            data: {
+                twoFactorEnabled: true,
+                twoFactorRecoveryCodes: recoveryCodes.map(hashToken),
+                // Spend the enrolling code too, so it cannot immediately be replayed at login.
+                twoFactorLastUsedStep: currentTimeStep(),
+            },
         });
 
         return { recoveryCodes };
@@ -60,13 +70,33 @@ export class TwoFactorService {
         });
     }
 
+    /**
+     * A TOTP code is valid for its whole 30-second step, so verifying it alone
+     * lets anyone who observes one use it again within that window. Each accepted
+     * step is recorded and never accepted twice — the conditional update also
+     * makes two simultaneous attempts with the same code resolve to one winner.
+     */
     async verifyCode(userId: string, code: string): Promise<boolean> {
         const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
         if (!user.twoFactorSecret) {
             return false;
         }
+
         const secret = decrypt(user.twoFactorSecret, this.getEncryptionKey());
-        return authenticator.verify({ token: code, secret });
+        if (!authenticator.verify({ token: code, secret })) {
+            return false;
+        }
+
+        const step = currentTimeStep();
+        const { count } = await this.prisma.user.updateMany({
+            where: {
+                id: userId,
+                OR: [{ twoFactorLastUsedStep: null }, { twoFactorLastUsedStep: { lt: step } }],
+            },
+            data: { twoFactorLastUsedStep: step },
+        });
+
+        return count > 0;
     }
 
     /** One-time use — the matched code is removed from the stored set on success. */
@@ -88,4 +118,9 @@ export class TwoFactorService {
     private getEncryptionKey(): string {
         return this.configService.get("TWO_FACTOR_ENCRYPTION_KEY", { infer: true });
     }
+}
+
+/** The time-step a TOTP code belongs to — the unit otplib validates against. */
+function currentTimeStep(): number {
+    return Math.floor(Date.now() / 1000 / (authenticator.options.step ?? 30));
 }

@@ -4,6 +4,7 @@ import type {
     AccountLinkedMessage,
     DeleteAccountCodeMessage,
     EmailSender,
+    ReactivateAccountMessage,
     ResetPasswordMessage,
     VerifyEmailMessage,
 } from "@/integrations/email/email-sender.interface.js";
@@ -31,5 +32,12 @@ export class ConsoleEmailSender implements EmailSender {
 
     async sendAccountDeleted(message: AccountDeletedMessage): Promise<void> {
         this.logger.log(`[account-deleted] to=${message.to} graceDays=${message.graceDays}`);
+    }
+
+    async sendReactivateAccount(message: ReactivateAccountMessage): Promise<void> {
+        this.logger.log(
+            `[reactivate-account] to=${message.to} code=${message.code} ` +
+                `graceEndsAt=${message.graceEndsAt.toISOString()}`,
+        );
     }
 }

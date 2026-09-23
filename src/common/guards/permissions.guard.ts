@@ -13,6 +13,7 @@ import { PERMISSIONS_KEY, type PermissionsMetadata } from "@/common/decorators/r
 import { IS_PUBLIC_KEY } from "@/common/decorators/public.decorator.js";
 import type { AuthenticatedUser } from "@/common/types/authenticated-request.type.js";
 import type { AccessTokenPayload } from "@/modules/auth/tokens.service.js";
+import { UserStatus } from "@/database/generated/prisma/enums.js";
 import { PermissionsService } from "@/modules/authorization/permissions.service.js";
 
 /**
@@ -21,13 +22,18 @@ import { PermissionsService } from "@/modules/authorization/permissions.service.
  *
  * Two things happen here, in order:
  *
- *  1. Freshness — the token's `tokenVersion` and `permVersion` are compared
+ *  1. Account state — a suspended or soft-deleted account is refused outright.
+ *     Checked here rather than at login because a token already in the wild stays
+ *     signature-valid; without this, suspending an account would only take effect
+ *     once its access token expired.
+ *
+ *  2. Freshness — the token's `tokenVersion` and `permVersion` are compared
  *     against the server's current values. A mismatch means the session was
  *     killed or the user's access changed since the token was issued, so the
  *     token is rejected (401) and the client refreshes. This is what makes
  *     revocation immediate instead of waiting out the token's TTL.
  *
- *  2. Permission — the route's required permissions are matched against the
+ *  3. Permission — the route's required permissions are matched against the
  *     resolved set. Routes declaring neither @RequirePermissions nor
  *     @AuthenticatedOnly are denied: a missing decorator must fail closed.
  */
@@ -52,8 +58,12 @@ export class PermissionsGuard implements CanActivate {
 
         const principal = await this.permissionsService.resolve(claims.sub);
 
-        if (!principal) {
+        if (!principal || principal.isDeleted) {
             throw new UnauthorizedException("Invalid credentials");
+        }
+
+        if (principal.status === UserStatus.SUSPENDED) {
+            throw new UnauthorizedException("This account has been suspended");
         }
 
         if (claims.tokenVersion !== principal.tokenVersion) {

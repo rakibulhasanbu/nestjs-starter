@@ -7,6 +7,8 @@ import { ZodValidationPipe } from "nestjs-zod";
 import { validateEnv } from "@/config/env.schema.js";
 import { PrismaModule } from "@/database/prisma.module.js";
 import { RedisModule } from "@/integrations/redis/redis.module.js";
+import { RedisService } from "@/integrations/redis/redis.service.js";
+import { RedisThrottlerStorage } from "@/integrations/redis/redis-throttler.storage.js";
 import { HealthModule } from "@/modules/health/health.module.js";
 import { AuthModule } from "@/modules/auth/auth.module.js";
 import { AuthorizationModule } from "@/modules/authorization/authorization.module.js";
@@ -19,7 +21,17 @@ import { PermissionsGuard } from "@/common/guards/permissions.guard.js";
 @Module({
     imports: [
         ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
-        ThrottlerModule.forRoot({ throttlers: [{ ttl: 60_000, limit: 60 }] }),
+        // Shared counters: the default per-process storage multiplies every limit
+        // by the number of running instances. RedisService is global, so it can be
+        // injected here.
+        ThrottlerModule.forRootAsync({
+            imports: [RedisModule],
+            inject: [RedisService],
+            useFactory: (redis: RedisService) => ({
+                throttlers: [{ ttl: 60_000, limit: 60 }],
+                storage: new RedisThrottlerStorage(redis),
+            }),
+        }),
         ScheduleModule.forRoot(),
         PrismaModule,
         RedisModule,

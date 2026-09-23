@@ -1,28 +1,21 @@
 import "dotenv/config";
+import { Logger } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
-import { VersioningType } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
+import type { NestExpressApplication } from "@nestjs/platform-express";
 import { AppModule } from "@/app.module.js";
-import { AllExceptionsFilter } from "@/common/filters/all-exceptions.filter.js";
-import { TransformResponseInterceptor } from "@/common/interceptors/transform-response.interceptor.js";
-import { buildCorsOptions } from "@/config/cors.config.js";
-import type { Env } from "@/config/env.schema.js";
+import { configureApp } from "@/config/configure-app.js";
 
 async function bootstrap() {
-    const app = await NestFactory.create(AppModule);
+    const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
-    const configService = app.get<ConfigService<Env, true>>(ConfigService);
-    app.enableCors(buildCorsOptions(configService));
-
-    app.useGlobalFilters(new AllExceptionsFilter());
-    app.useGlobalInterceptors(new TransformResponseInterceptor());
-    app.setGlobalPrefix("api");
-    app.enableVersioning({
-        type: VersioningType.URI,
-        defaultVersion: "1",
-    });
+    configureApp(app);
 
     await app.listen(process.env.PORT ?? 3000);
 }
 
-bootstrap();
+// A rejected bootstrap must not become an unhandled rejection: without this the
+// process dies with no usable message and a non-zero-but-unexplained exit.
+bootstrap().catch((error: unknown) => {
+    Logger.error(error instanceof Error ? error.stack : String(error), "Bootstrap");
+    process.exit(1);
+});

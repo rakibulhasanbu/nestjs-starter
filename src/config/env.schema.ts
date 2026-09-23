@@ -8,6 +8,31 @@ const baseEnvSchema = z.object({
     DATABASE_URL: z.url(),
     REDIS_URL: z.url().default("redis://localhost:6379"),
 
+    /**
+     * Express's `trust proxy`. Leave unset when the app is exposed directly: the
+     * rate limiter keys on `req.ip`, and trusting a forwarding header nobody
+     * strips would let a client spoof its own address. Behind a load balancer the
+     * opposite holds — without this every request carries the proxy's address, so
+     * the whole deployment shares one rate-limit bucket and session IPs are noise.
+     * Accepts `true`/`false`, a hop count ("1"), or an Express subnet expression
+     * ("loopback", "10.0.0.0/8").
+     */
+    TRUST_PROXY: z
+        .string()
+        .optional()
+        .transform(value => {
+            const trimmed = value?.trim();
+
+            if (!trimmed) {
+                return undefined;
+            }
+            if (trimmed === "true" || trimmed === "false") {
+                return trimmed === "true";
+            }
+
+            return /^\d+$/.test(trimmed) ? Number(trimmed) : trimmed;
+        }),
+
     CORS_ORIGINS: z
         .string()
         .optional()
@@ -28,6 +53,7 @@ const baseEnvSchema = z.object({
     EMAIL_VERIFICATION_TTL_MINUTES: z.coerce.number().default(5),
     PASSWORD_RESET_TTL_MINUTES: z.coerce.number().default(5),
     DELETE_ACCOUNT_OTP_TTL_MINUTES: z.coerce.number().default(5),
+    REACTIVATE_ACCOUNT_OTP_TTL_MINUTES: z.coerce.number().default(5),
 
     LOGIN_MAX_ATTEMPTS: z.coerce.number().default(5),
     LOGIN_LOCKOUT_MINUTES: z.coerce.number().default(15),
@@ -42,7 +68,14 @@ const baseEnvSchema = z.object({
     WEBAUTHN_CHALLENGE_TTL_MINUTES: z.coerce.number().default(5),
 
     TWO_FACTOR_APP_NAME: z.string().min(1).default("Nest Starter"),
-    TWO_FACTOR_ENCRYPTION_KEY: z.string().length(64, "TWO_FACTOR_ENCRYPTION_KEY must be a 32-byte hex string"),
+    /**
+     * Length alone was not enough: `Buffer.from(key, "hex")` silently yields zero
+     * bytes for a 64-character string that is not hex, so a typo passed validation
+     * at boot and only surfaced as a crash when the first user enabled 2FA.
+     */
+    TWO_FACTOR_ENCRYPTION_KEY: z
+        .string()
+        .regex(/^[0-9a-fA-F]{64}$/, "TWO_FACTOR_ENCRYPTION_KEY must be 64 hex characters (a 32-byte key)"),
     TWO_FACTOR_LOGIN_TTL: z.string().default("5m"),
 
     /** How long a resolved permission set may live in this process's memory before it is re-read. */

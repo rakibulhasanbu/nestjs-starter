@@ -6,7 +6,10 @@ export type PublicUserProfile = Pick<UserProfileModel, "gender" | "bio"> & {
     dateOfBirth: string | null;
 };
 
-export type PublicUser = Omit<UserModel, "password" | "twoFactorSecret" | "twoFactorRecoveryCodes"> & {
+export type PublicUser = Omit<
+    UserModel,
+    "password" | "twoFactorSecret" | "twoFactorRecoveryCodes" | "twoFactorLastUsedStep"
+> & {
     roleIds: string[];
     profile: PublicUserProfile | null;
 };
@@ -16,6 +19,7 @@ export function toPublicUser(user: UserWithRoles): PublicUser {
         password: _password,
         twoFactorSecret: _twoFactorSecret,
         twoFactorRecoveryCodes: _twoFactorRecoveryCodes,
+        twoFactorLastUsedStep: _twoFactorLastUsedStep,
         roles,
         profile,
         ...publicUser

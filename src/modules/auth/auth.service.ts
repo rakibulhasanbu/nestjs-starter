@@ -41,8 +41,17 @@ export class AuthService {
         @Inject(EMAIL_SENDER) private readonly emailSender: EmailSender,
     ) {}
 
+    /** Lazily built once — see burnPasswordComparison. */
+    private decoyPasswordHash?: Promise<string>;
+
     async signup(input: SignupInput): Promise<{ user: PublicUser }> {
         const existing = await this.usersService.findByEmail(input.email);
+        if (existing?.deletedAt) {
+            // The row is still there (grace period), so the unique email would
+            // reject this signup. Offering the account back beats a dead-end
+            // 409 the owner cannot act on.
+            await this.offerReactivation(existing.id, existing.email, existing.deletedAt);
+        }
         if (existing) {
             throw new ConflictException("An account with this email already exists");
         }
@@ -62,7 +71,11 @@ export class AuthService {
 
     async signin(input: SigninInput, context: LoginContext) {
         const user = await this.usersService.findByEmail(input.email);
-        if (!user || user.deletedAt) {
+        if (!user) {
+            // Returning here immediately made an unknown address answer in a
+            // millisecond while a known one paid for an Argon2 verify — the reply
+            // is identical either way, but the clock gave the answer away.
+            await this.burnPasswordComparison(input.password);
             throw new UnauthorizedException("Invalid email or password");
         }
 
@@ -90,6 +103,19 @@ export class AuthService {
             throw new UnauthorizedException("Invalid email or password");
         }
 
+        // Reset before the verification bail-out: the password was correct, so the
+        // failure counter has to clear here too or an unverified user accumulates
+        // strikes and locks themselves out while signing in correctly.
+        await this.usersService.resetFailedLogin(user.id);
+
+        // Only now, with the password proven, is it safe to admit the account is
+        // awaiting deletion — checking earlier would let anyone probe an address
+        // for it. Deletion is self-service, so whoever holds the password is the
+        // person entitled to undo it.
+        if (user.deletedAt) {
+            await this.offerReactivation(user.id, user.email, user.deletedAt);
+        }
+
         if (user.status === UserStatus.PENDING_VERIFICATION) {
             await this.sendVerificationEmail(user.id, user.email);
             throw new UnauthorizedException({
@@ -97,8 +123,6 @@ export class AuthService {
                 message: "Please verify your email before logging in",
             });
         }
-
-        await this.usersService.resetFailedLogin(user.id);
 
         if (user.twoFactorEnabled) {
             return { twoFactorRequired: true as const, twoFactorToken: this.tokensService.signTwoFactorToken(user.id) };
@@ -115,12 +139,27 @@ export class AuthService {
         context: LoginContext,
         explicitDevice?: { deviceType?: string; deviceName?: string },
     ) {
-        const record = await this.tokensService.consumeRefreshToken(rawRefreshToken);
-        if (!record || record.user.deletedAt || record.user.status !== UserStatus.ACTIVE) {
+        const consumption = await this.tokensService.consumeRefreshToken(rawRefreshToken);
+
+        if (consumption.outcome === "reused") {
+            // consumeRefreshToken has already dropped the rotation chain. Bumping
+            // the token version closes the access-token window too, so a thief who
+            // refreshed first loses the session instead of inheriting it.
+            await this.permissionsService.bumpTokenVersion(consumption.userId);
+            throw new UnauthorizedException("This session was ended for security reasons — please sign in again");
+        }
+
+        if (consumption.outcome === "invalid") {
             throw new UnauthorizedException("Invalid or expired refresh token");
         }
 
-        return this.issueSession(record.user, context, explicitDevice);
+        const { record } = consumption;
+        if (record.user.deletedAt || record.user.status !== UserStatus.ACTIVE) {
+            throw new UnauthorizedException("Invalid or expired refresh token");
+        }
+
+        // Same family: this is a rotation of an existing login, not a new one.
+        return this.issueSession(record.user, context, explicitDevice, record.familyId);
     }
 
     async logout(rawRefreshToken: string): Promise<void> {
@@ -135,10 +174,17 @@ export class AuthService {
         explicitDevice?: { deviceType?: string; deviceName?: string },
     ) {
         const user = await this.usersService.findByEmail(email);
-        if (!user || !(await this.emailTokensService.consume(user.id, EmailTokenType.VERIFY_EMAIL, code))) {
+        if (
+            !user ||
+            !this.isReachableAccount(user) ||
+            !(await this.emailTokensService.consume(user.id, EmailTokenType.VERIFY_EMAIL, code))
+        ) {
             throw new BadRequestException("Invalid or expired verification code");
         }
         const verified = await this.usersService.markEmailVerified(user.id);
+        // The guard authorizes against the account's status, so the cached
+        // principal has to drop its now-stale PENDING_VERIFICATION copy.
+        await this.permissionsService.invalidateCache(user.id);
         return this.issueSession(verified, context, explicitDevice);
     }
 
@@ -152,7 +198,7 @@ export class AuthService {
 
     async forgotPassword(email: string): Promise<void> {
         const user = await this.usersService.findByEmail(email);
-        if (!user || user.deletedAt) {
+        if (!user || !this.isReachableAccount(user)) {
             return; // don't reveal whether the account exists
         }
 
@@ -177,7 +223,13 @@ export class AuthService {
         explicitDevice?: { deviceType?: string; deviceName?: string },
     ) {
         const user = await this.usersService.findByEmail(email);
-        if (!user || !(await this.emailTokensService.consume(user.id, EmailTokenType.RESET_PASSWORD, code))) {
+        if (
+            !user ||
+            !this.isReachableAccount(user) ||
+            !(await this.emailTokensService.consume(user.id, EmailTokenType.RESET_PASSWORD, code))
+        ) {
+            // Deliberately the same error as a bad code: a suspended account must
+            // not be able to tell its suspension apart from a wrong code.
             throw new BadRequestException("Invalid or expired reset code");
         }
 
@@ -247,7 +299,11 @@ export class AuthService {
 
         const user = identity ? identity.user : await this.linkOrCreateGoogleUser(profile);
 
-        if (user.deletedAt || user.status === UserStatus.SUSPENDED) {
+        if (user.deletedAt) {
+            await this.offerReactivation(user.id, user.email, user.deletedAt);
+        }
+
+        if (user.status === UserStatus.SUSPENDED) {
             throw new UnauthorizedException("This account is not available");
         }
 
@@ -258,6 +314,26 @@ export class AuthService {
         const existingUser = await this.usersService.findByEmail(profile.email);
 
         if (existingUser) {
+            if (existingUser.deletedAt) {
+                // Bail before linking: a deleted account must be restored first,
+                // or this call would quietly attach an identity to a row the
+                // purge job is about to remove.
+                await this.offerReactivation(existingUser.id, existingUser.email, existingUser.deletedAt);
+            }
+
+            // The account is allowed one identity per provider. Reaching here with
+            // a different one means a second Google account shares this email
+            // address; saying so beats the raw constraint violation the database
+            // would otherwise raise.
+            const linked = await this.socialIdentitiesService.findByUserAndProvider(
+                existingUser.id,
+                AuthProvider.GOOGLE,
+            );
+
+            if (linked) {
+                throw new ConflictException("This account is already linked to a different Google account");
+            }
+
             await this.socialIdentitiesService.link(
                 existingUser.id,
                 AuthProvider.GOOGLE,
@@ -266,6 +342,7 @@ export class AuthService {
             );
             if (!existingUser.emailVerifiedAt) {
                 await this.usersService.markEmailVerified(existingUser.id);
+                await this.permissionsService.invalidateCache(existingUser.id);
             }
             await this.emailSender.sendAccountLinked({ to: existingUser.email, provider: "Google" });
             return existingUser;
@@ -334,7 +411,11 @@ export class AuthService {
     async invite(email: string, roleIds: string[]): Promise<PublicUser> {
         const existing = await this.usersService.findByEmail(email);
         if (existing) {
-            throw new ConflictException("An account with this email already exists");
+            throw new ConflictException(
+                existing.deletedAt
+                    ? "This address belongs to an account awaiting deletion — its owner must reactivate it, or the grace period must run out first"
+                    : "An account with this email already exists",
+            );
         }
 
         const placeholderPassword = await argon2.hash(randomUUID());
@@ -377,15 +458,22 @@ export class AuthService {
         return this.webauthnService.createAuthenticationOptions(user.id);
     }
 
-    async loginWithWebauthn(email: string, credential: AuthenticationResponseJSON, context: LoginContext) {
+    async loginWithWebauthn(
+        email: string,
+        credential: AuthenticationResponseJSON,
+        context: LoginContext,
+        explicitDevice?: { deviceType?: string; deviceName?: string },
+    ) {
         const user = await this.usersService.findByEmail(email);
         if (!user || user.deletedAt || user.status === UserStatus.SUSPENDED) {
             throw new UnauthorizedException("This account is not available");
         }
 
+        await this.assertEmailVerified(user);
+
         await this.webauthnService.verifyAuthentication(user.id, credential);
 
-        return this.issueSession(user, context);
+        return this.issueSession(user, context, explicitDevice);
     }
 
     getUsernamelessWebauthnLoginOptions() {
@@ -400,7 +488,25 @@ export class AuthService {
             throw new UnauthorizedException("This account is not available");
         }
 
+        await this.assertEmailVerified(user);
+
         return this.issueSession(user, context);
+    }
+
+    /**
+     * Email verification gates every login method, not just password. A passkey
+     * can only be registered from an already-authenticated session, so this is
+     * normally unreachable — it exists so the rule holds no matter how the
+     * credential got there.
+     */
+    private async assertEmailVerified(user: { id: string; email: string; status: UserStatus }): Promise<void> {
+        if (user.status !== UserStatus.PENDING_VERIFICATION) return;
+
+        await this.sendVerificationEmail(user.id, user.email);
+        throw new UnauthorizedException({
+            code: "EMAIL_NOT_VERIFIED",
+            message: "Please verify your email before logging in",
+        });
     }
 
     async listWebauthnCredentials(userId: string) {
@@ -412,11 +518,22 @@ export class AuthService {
         await this.webauthnCredentialsService.remove(userId, credentialId);
     }
 
+    /**
+     * Refused while 2FA is already on. Issuing a fresh secret here would leave the
+     * account enrolled against a secret nobody has yet, so the old behaviour was
+     * effectively "turn 2FA off" — bypassing disableTwoFactor, which deliberately
+     * demands the password plus a live code. Turning 2FA off must stay one path.
+     */
     async setupTwoFactor(userId: string) {
         const user = await this.usersService.findById(userId);
         if (!user || user.deletedAt) {
             throw new UnauthorizedException("Invalid credentials");
         }
+
+        if (user.twoFactorEnabled) {
+            throw new ConflictException("Two-factor authentication is already enabled — disable it first to re-enrol");
+        }
+
         return this.twoFactorService.setup(user.id, user.email);
     }
 
@@ -424,15 +541,27 @@ export class AuthService {
         return this.twoFactorService.enable(userId, code);
     }
 
-    async disableTwoFactor(userId: string, password: string, code: string): Promise<void> {
+    /**
+     * The password check is skipped for accounts that have none — Google- and
+     * passkey-only users. Requiring it there made 2FA impossible to turn off once
+     * enabled, with no recovery path short of a support ticket; the authenticator
+     * code is the strongest proof those accounts can offer.
+     */
+    async disableTwoFactor(userId: string, password: string | undefined, code: string): Promise<void> {
         const user = await this.usersService.findById(userId);
-        if (!user || user.deletedAt || !user.password) {
+        if (!user || user.deletedAt) {
             throw new UnauthorizedException("Invalid credentials");
         }
 
-        const passwordValid = await argon2.verify(user.password, password);
-        if (!passwordValid) {
-            throw new UnauthorizedException("Incorrect password");
+        if (user.password) {
+            if (!password) {
+                throw new BadRequestException("Your password is required to disable two-factor authentication");
+            }
+
+            const passwordValid = await argon2.verify(user.password, password);
+            if (!passwordValid) {
+                throw new UnauthorizedException("Incorrect password");
+            }
         }
 
         const codeValid = await this.twoFactorService.verifyCode(userId, code);
@@ -457,15 +586,104 @@ export class AuthService {
             throw new UnauthorizedException("This account is not available");
         }
 
+        if (user.lockedUntil && user.lockedUntil > new Date()) {
+            throw new UnauthorizedException("Account temporarily locked due to too many failed attempts");
+        }
+
         const verified = recoveryCode
             ? await this.twoFactorService.verifyRecoveryCode(user.id, recoveryCode)
             : await this.twoFactorService.verifyCode(user.id, code!);
 
         if (!verified) {
+            // Six digits is a small enough space that IP-based throttling alone
+            // leaves it brute-forceable from a spread of addresses; the account
+            // itself has to lock, exactly as it does for a wrong password.
+            await this.usersService.recordFailedLogin(
+                user.id,
+                this.configService.get("LOGIN_MAX_ATTEMPTS", { infer: true }),
+                this.configService.get("LOGIN_LOCKOUT_MINUTES", { infer: true }),
+            );
             throw new UnauthorizedException("Invalid two-factor code");
         }
 
+        await this.usersService.resetFailedLogin(user.id);
+
         return this.issueSession(user, context, explicitDevice);
+    }
+
+    /**
+     * Spends roughly what a real password check spends, so the time taken cannot
+     * be used to tell a registered address from an unregistered one. The hash is
+     * built once and reused; its plaintext is discarded, so nothing can match it.
+     */
+    private async burnPasswordComparison(candidate: string): Promise<void> {
+        this.decoyPasswordHash ??= argon2.hash(randomUUID());
+
+        try {
+            await argon2.verify(await this.decoyPasswordHash, candidate);
+        } catch {
+            // A malformed candidate is not interesting here; the cost has been paid.
+        }
+    }
+
+    /**
+     * Whether an account may still be acted on through an emailed code. Suspended
+     * and soft-deleted accounts are excluded: the verification and password-reset
+     * flows both end in a signed-in session, so letting either run would hand back
+     * access that was deliberately taken away.
+     */
+    /**
+     * Undoes a deletion the owner asked for. Deliberately issues no session: the
+     * code proves control of the mailbox and nothing more, so an account with a
+     * password or 2FA still has to clear those on the next sign-in.
+     */
+    async reactivateAccount(email: string, code: string): Promise<void> {
+        const user = await this.usersService.findByEmail(email);
+        if (
+            !user ||
+            !user.deletedAt ||
+            user.status === UserStatus.SUSPENDED ||
+            !(await this.emailTokensService.consume(user.id, EmailTokenType.REACTIVATE_ACCOUNT, code))
+        ) {
+            // One error for every cause, so a suspended account cannot tell its
+            // suspension apart from a wrong code.
+            throw new BadRequestException("Invalid or expired reactivation code");
+        }
+
+        await this.usersService.restore(user.id);
+        // The guard caches `isDeleted`, so the stale copy has to go or the
+        // restored account keeps being refused until the TTL runs out.
+        await this.permissionsService.invalidateCache(user.id);
+    }
+
+    /**
+     * Ends the request for an account still inside its deletion grace period:
+     * mails the code that undoes the deletion and answers with a machine-readable
+     * marker, so a client can route to the reactivation screen instead of showing
+     * a 409 the user has no way to act on.
+     *
+     * Every caller reaches here having already established the caller is the
+     * owner (correct password, verified Google identity) or that the address is
+     * unusable anyway (signup) — so this never reveals anything new.
+     */
+    private async offerReactivation(userId: string, email: string, deletedAt: Date): Promise<never> {
+        const graceDays = this.configService.get("DELETED_USER_GRACE_DAYS", { infer: true });
+        const graceEndsAt = new Date(deletedAt.getTime() + graceDays * 24 * 60 * 60 * 1000);
+
+        const code = await this.emailTokensService.issueReactivateAccountToken(userId);
+        if (code) {
+            await this.emailSender.sendReactivateAccount({ to: email, code, graceEndsAt });
+        }
+
+        throw new ConflictException({
+            code: "ACCOUNT_PENDING_DELETION",
+            message: "This account is scheduled for deletion — check your email for a code to reactivate it",
+            graceEndsAt: graceEndsAt.toISOString(),
+        });
+    }
+
+    private isReachableAccount(user: Pick<UserWithRoles, "status" | "deletedAt">): boolean {
+        return !user.deletedAt && user.status !== UserStatus.SUSPENDED;
     }
 
     private async sendVerificationEmail(userId: string, email: string): Promise<void> {
@@ -484,6 +702,7 @@ export class AuthService {
         user: Pick<UserWithRoles, "id" | "email" | "permVersion" | "tokenVersion">,
         context: LoginContext,
         explicitDevice?: { deviceType?: string; deviceName?: string },
+        familyId?: string,
     ) {
         const accessToken = this.tokensService.signAccessToken({
             sub: user.id,
@@ -492,11 +711,15 @@ export class AuthService {
             tokenVersion: user.tokenVersion,
         });
         const device = resolveDeviceInfo(context.userAgent, explicitDevice);
-        const refreshToken = await this.tokensService.issueRefreshToken(user.id, {
-            userAgent: context.userAgent,
-            ipAddress: context.ipAddress,
-            device,
-        });
+        const { token: refreshToken } = await this.tokensService.issueRefreshToken(
+            user.id,
+            {
+                userAgent: context.userAgent,
+                ipAddress: context.ipAddress,
+                device,
+            },
+            familyId,
+        );
 
         return { accessToken, refreshToken };
     }

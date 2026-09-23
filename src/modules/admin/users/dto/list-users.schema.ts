@@ -9,7 +9,8 @@ export const listUsersSchema = z.strictObject({
     /** Role slug, e.g. "admin". Free-form because roles are created at runtime. */
     roleId: z.string().min(1).max(50).optional(),
     status: z.enum(UserStatus).optional(),
-    deleted: z.coerce.boolean().optional(),
+    /** `z.coerce.boolean()` would read the string "false" as true — every non-empty string is truthy. */
+    deleted: z.stringbool().optional(),
 });
 
 export type ListUsersInput = z.infer<typeof listUsersSchema>;

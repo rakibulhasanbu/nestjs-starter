@@ -22,8 +22,11 @@ export class AdminUsersService {
         private readonly permissionsService: PermissionsService,
     ) {}
 
-    async list(query: ListUsersInput) {
-        const { items, total } = await this.usersService.list(query);
+    async list(actor: AuthenticatedUser, query: ListUsersInput) {
+        const { items, total } = await this.usersService.list({
+            ...query,
+            visibleTo: { actorId: actor.id, maxRank: actor.maxRank },
+        });
         return {
             data: items.map(toPublicUser),
             meta: { page: query.page, limit: query.limit, total },
@@ -35,9 +38,26 @@ export class AdminUsersService {
         return toPublicUser(target);
     }
 
+    /**
+     * An email change is not an ordinary field edit: the new address is unproven,
+     * and it is the address password-reset codes go to. So the account drops back
+     * to PENDING_VERIFICATION, existing sessions are cut, and a fresh verification
+     * code is sent — otherwise editing this one field would hand over the account.
+     */
     async update(actor: AuthenticatedUser, targetId: string, data: AdminUpdateUserInput) {
         const target = await this.findManageableTarget(actor, targetId);
-        const updated = await this.usersService.updateByAdmin(target.id, data);
+        const emailChanged = data.email !== undefined && data.email !== target.email;
+
+        const updated = await this.usersService.updateByAdmin(target.id, data, {
+            resetEmailVerification: emailChanged,
+        });
+
+        if (emailChanged) {
+            await this.tokensService.revokeAllRefreshTokens(target.id);
+            await this.permissionsService.bumpTokenVersion(target.id);
+            await this.authService.resendVerification(updated.email);
+        }
+
         return toPublicUser(updated);
     }
 
@@ -77,22 +97,26 @@ export class AdminUsersService {
         if (status === "SUSPENDED") {
             await this.tokensService.revokeAllRefreshTokens(target.id);
             await this.permissionsService.bumpTokenVersion(target.id);
+        } else {
+            // Reactivation bumps no version, so the cached principal would keep
+            // reporting SUSPENDED — and the guard would keep refusing — until its
+            // TTL ran out.
+            await this.permissionsService.invalidateCache(target.id);
         }
 
         return toPublicUser(updated);
     }
 
-    async softDelete(actor: AuthenticatedUser, targetId: string) {
-        const target = await this.findManageableTarget(actor, targetId);
-        const updated = await this.usersService.softDelete(target.id);
-        await this.tokensService.revokeAllRefreshTokens(target.id);
-        await this.permissionsService.bumpTokenVersion(target.id);
-        return toPublicUser(updated);
-    }
-
+    /**
+     * Admins cannot delete accounts — only the owner can, and only for
+     * themselves. This reverses that self-service deletion on request (support
+     * ticket, "I changed my mind"), which is why it is the one place allowed to
+     * load a deleted target.
+     */
     async restore(actor: AuthenticatedUser, targetId: string) {
         const target = await this.findManageableTarget(actor, targetId, { includeDeleted: true });
         const updated = await this.usersService.restore(target.id);
+        await this.permissionsService.invalidateCache(target.id);
         return toPublicUser(updated);
     }
 

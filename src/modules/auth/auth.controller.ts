@@ -12,6 +12,7 @@ import { RefreshTokenDto } from "@/modules/auth/dto/refresh-token.schema.js";
 import { LogoutDto } from "@/modules/auth/dto/logout.schema.js";
 import { VerifyEmailDto, ResendVerificationDto } from "@/modules/auth/dto/verify-email.schema.js";
 import { ForgotPasswordDto } from "@/modules/auth/dto/forgot-password.schema.js";
+import { ReactivateAccountDto } from "@/modules/auth/dto/reactivate-account.schema.js";
 import { ResetPasswordDto } from "@/modules/auth/dto/reset-password.schema.js";
 import { ChangePasswordDto } from "@/modules/auth/dto/change-password.schema.js";
 import { GoogleLoginDto } from "@/modules/auth/dto/google-login.schema.js";
@@ -81,6 +82,19 @@ export class AuthController {
     @Post("resend-verification")
     async resendVerification(@Body() dto: ResendVerificationDto) {
         await this.authService.resendVerification(dto.email);
+    }
+
+    /**
+     * Undoes a self-service deletion within its grace period. No session comes
+     * back — the account is restored and the user signs in as usual, so 2FA and
+     * every other login rule still apply.
+     */
+    @Public()
+    @Throttle({ default: { limit: 5, ttl: 60_000 } })
+    @HttpCode(HttpStatus.NO_CONTENT)
+    @Post("reactivate-account")
+    async reactivateAccount(@Body() dto: ReactivateAccountDto) {
+        await this.authService.reactivateAccount(dto.email, dto.code);
     }
 
     @Public()
@@ -198,10 +212,12 @@ export class AuthController {
     @HttpCode(HttpStatus.OK)
     @Post("webauthn/login/verify")
     loginWithWebauthn(@Body() dto: WebauthnLoginVerifyDto, @Req() req: Request) {
-        return this.authService.loginWithWebauthn(dto.email, dto.credential as unknown as AuthenticationResponseJSON, {
-            userAgent: req.headers["user-agent"],
-            ipAddress: req.ip,
-        });
+        return this.authService.loginWithWebauthn(
+            dto.email,
+            dto.credential as unknown as AuthenticationResponseJSON,
+            { userAgent: req.headers["user-agent"], ipAddress: req.ip },
+            { deviceType: dto.deviceType, deviceName: dto.deviceName },
+        );
     }
 
     @Public()
@@ -265,9 +281,12 @@ export class AuthController {
     @HttpCode(HttpStatus.OK)
     @Post("2fa/login-verify")
     loginWithTwoFactor(@Body() dto: TwoFactorLoginVerifyDto, @Req() req: Request) {
-        return this.authService.loginWithTwoFactor(dto.twoFactorToken, dto.code, dto.recoveryCode, {
-            userAgent: req.headers["user-agent"],
-            ipAddress: req.ip,
-        });
+        return this.authService.loginWithTwoFactor(
+            dto.twoFactorToken,
+            dto.code,
+            dto.recoveryCode,
+            { userAgent: req.headers["user-agent"], ipAddress: req.ip },
+            { deviceType: dto.deviceType, deviceName: dto.deviceName },
+        );
     }
 }

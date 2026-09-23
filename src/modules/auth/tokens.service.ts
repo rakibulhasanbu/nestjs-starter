@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import ms from "ms";
+import { randomUUID } from "node:crypto";
 import { generateOpaqueToken, hashToken } from "@/common/utils/token.util.js";
 import type { DeviceInfo } from "@/common/utils/device.util.js";
 import type { Env } from "@/config/env.schema.js";
@@ -26,6 +27,28 @@ export interface IssuedTokenPair {
     refreshToken: string;
 }
 
+export interface IssuedRefreshToken {
+    token: string;
+    /** Pass back into issueRefreshToken on the next rotation to keep the chain intact. */
+    familyId: string;
+}
+
+/**
+ * Outcome of presenting a refresh token.
+ *
+ * `reused` is the interesting one: the token was real but had already been
+ * rotated away. Either it leaked or a client replayed it, and neither case can
+ * be told apart from the other — so the whole rotation chain is dropped.
+ */
+export type RefreshTokenConsumption =
+    | { outcome: "valid"; record: RefreshTokenWithUser }
+    | { outcome: "reused"; userId: string }
+    | { outcome: "invalid" };
+
+type RefreshTokenWithUser = Awaited<ReturnType<PrismaService["refreshToken"]["findUniqueOrThrow"]>> & {
+    user: Awaited<ReturnType<PrismaService["user"]["findUniqueOrThrow"]>>;
+};
+
 @Injectable()
 export class TokensService {
     constructor(
@@ -41,17 +64,21 @@ export class TokensService {
         });
     }
 
+    /** Omitting `familyId` starts a new chain — i.e. a fresh login rather than a rotation. */
     async issueRefreshToken(
         userId: string,
         context: { userAgent?: string; ipAddress?: string; device: DeviceInfo },
-    ): Promise<string> {
+        familyId?: string,
+    ): Promise<IssuedRefreshToken> {
         const { token, tokenHash } = generateOpaqueToken();
         const ttlMs = ms(this.configService.get("JWT_REFRESH_TTL", { infer: true }) as ms.StringValue);
+        const family = familyId ?? randomUUID();
 
         await this.prisma.refreshToken.create({
             data: {
                 userId,
                 tokenHash,
+                familyId: family,
                 userAgent: context.userAgent,
                 ipAddress: context.ipAddress,
                 deviceType: context.device.deviceType,
@@ -60,11 +87,19 @@ export class TokensService {
             },
         });
 
-        return token;
+        return { token, familyId: family };
     }
 
-    /** Validates a refresh token and revokes it — call issueRefreshToken again to rotate. */
-    async consumeRefreshToken(rawToken: string) {
+    /**
+     * Validates a refresh token and revokes it — call issueRefreshToken again with
+     * the returned familyId to rotate.
+     *
+     * Rotation alone is not enough to make a stolen token harmless: whoever
+     * refreshes second simply fails, which means a thief who gets there first
+     * silently takes over the session and the real user is the one logged out.
+     * Recognising the already-spent token is what turns that round the right way.
+     */
+    async consumeRefreshToken(rawToken: string): Promise<RefreshTokenConsumption> {
         const tokenHash = hashToken(rawToken);
 
         const record = await this.prisma.refreshToken.findUnique({
@@ -72,16 +107,36 @@ export class TokensService {
             include: { user: true },
         });
 
-        if (!record || record.revokedAt || record.expiresAt < new Date()) {
-            return null;
+        if (!record) {
+            return { outcome: "invalid" };
         }
 
-        await this.prisma.refreshToken.update({
-            where: { id: record.id },
+        if (record.revokedAt) {
+            await this.revokeFamily(record.familyId);
+            return { outcome: "reused", userId: record.userId };
+        }
+
+        if (record.expiresAt < new Date()) {
+            return { outcome: "invalid" };
+        }
+
+        // Claim the token atomically. Losing this race means a concurrent request
+        // just spent it — a client double-tapping refresh, not a leak, so the
+        // family is left alone.
+        const { count } = await this.prisma.refreshToken.updateMany({
+            where: { id: record.id, revokedAt: null },
             data: { revokedAt: new Date(), lastUsedAt: new Date() },
         });
 
-        return record;
+        return count === 0 ? { outcome: "invalid" } : { outcome: "valid", record };
+    }
+
+    /** Drops an entire rotation chain — every token descended from one login. */
+    async revokeFamily(familyId: string): Promise<void> {
+        await this.prisma.refreshToken.updateMany({
+            where: { familyId, revokedAt: null },
+            data: { revokedAt: new Date() },
+        });
     }
 
     async revokeRefreshToken(rawToken: string): Promise<void> {
@@ -122,6 +177,19 @@ export class TokensService {
                 expiresIn: this.configService.get("TWO_FACTOR_LOGIN_TTL", { infer: true }),
             },
         );
+    }
+
+    /** Removes spent and long-expired rows; returns how many were deleted. */
+    async purgeExpired(revokedRetentionDays: number): Promise<number> {
+        const revokedCutoff = new Date(Date.now() - revokedRetentionDays * 24 * 60 * 60 * 1000);
+
+        const { count } = await this.prisma.refreshToken.deleteMany({
+            where: {
+                OR: [{ expiresAt: { lt: new Date() } }, { revokedAt: { lt: revokedCutoff } }],
+            },
+        });
+
+        return count;
     }
 
     verifyTwoFactorToken(token: string): string {

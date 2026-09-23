@@ -13,6 +13,12 @@ export class SocialIdentitiesService {
         });
     }
 
+    findByUserAndProvider(userId: string, provider: AuthProvider) {
+        return this.prisma.socialIdentity.findUnique({
+            where: { userId_provider: { userId, provider } },
+        });
+    }
+
     link(userId: string, provider: AuthProvider, providerAccountId: string, email: string) {
         return this.prisma.socialIdentity.create({
             data: { userId, provider, providerAccountId, email },

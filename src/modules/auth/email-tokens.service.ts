@@ -33,6 +33,12 @@ export class EmailTokensService {
         return this.issue(userId, EmailTokenType.DELETE_ACCOUNT, ttlMinutes * 60 * 1000);
     }
 
+    /** Returns null (no code issued/sent) while a still-valid code is within its resend cooldown. */
+    async issueReactivateAccountToken(userId: string): Promise<string | null> {
+        const ttlMinutes = this.configService.get("REACTIVATE_ACCOUNT_OTP_TTL_MINUTES", { infer: true });
+        return this.issue(userId, EmailTokenType.REACTIVATE_ACCOUNT, ttlMinutes * 60 * 1000);
+    }
+
     /** Checks the code for this user+type, tracks failed attempts, and marks it used on success. */
     async consume(userId: string, type: EmailTokenType, code: string): Promise<boolean> {
         const record = await this.prisma.emailToken.findUnique({ where: { userId_type: { userId, type } } });
@@ -49,6 +55,15 @@ export class EmailTokensService {
         await this.prisma.emailToken.update({ where: { id: record.id }, data: { usedAt: new Date() } });
 
         return true;
+    }
+
+    /** Removes codes that can no longer be redeemed; returns how many were deleted. */
+    async purgeExpired(): Promise<number> {
+        const { count } = await this.prisma.emailToken.deleteMany({
+            where: { expiresAt: { lt: new Date() } },
+        });
+
+        return count;
     }
 
     private async issue(userId: string, type: EmailTokenType, ttlMs: number): Promise<string | null> {

@@ -39,6 +39,17 @@ export class PermissionsService {
     }
 
     /**
+     * Drops this user's cached principal without touching any version marker.
+     * Required after any change to `status` or `deletedAt` that does not already
+     * bump a version — the guard now authorizes against those fields, so a stale
+     * entry would keep a reactivated account locked out (or, after a restore,
+     * keep reporting it as deleted) until the cache TTL expired.
+     */
+    async invalidateCache(userId: string): Promise<void> {
+        await this.cache.invalidate(userId);
+    }
+
+    /**
      * Invalidates every access token this user holds, forcing a refresh that
      * picks up their new permissions. Pass `tx` when the role change itself is
      * transactional, so the version can never advance without the change landing.
@@ -104,6 +115,8 @@ export class PermissionsService {
             where: { id: userId },
             select: {
                 id: true,
+                status: true,
+                deletedAt: true,
                 permVersion: true,
                 tokenVersion: true,
                 roles: {
@@ -136,6 +149,8 @@ export class PermissionsService {
 
         return {
             userId: user.id,
+            status: user.status,
+            isDeleted: user.deletedAt !== null,
             roleIds: user.roles.map(({ role }) => role.id),
             permissions,
             maxRank,

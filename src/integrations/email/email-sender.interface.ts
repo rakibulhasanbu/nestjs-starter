@@ -18,6 +18,13 @@ export interface DeleteAccountCodeMessage {
     code: string;
 }
 
+/** Sent when someone tries to use an address whose account is inside its deletion grace period. */
+export interface ReactivateAccountMessage {
+    to: string;
+    code: string;
+    graceEndsAt: Date;
+}
+
 export interface AccountDeletedMessage {
     to: string;
     graceDays: number;
@@ -35,4 +42,5 @@ export interface EmailSender {
     sendAccountLinked(message: AccountLinkedMessage): Promise<void>;
     sendDeleteAccountCode(message: DeleteAccountCodeMessage): Promise<void>;
     sendAccountDeleted(message: AccountDeletedMessage): Promise<void>;
+    sendReactivateAccount(message: ReactivateAccountMessage): Promise<void>;
 }

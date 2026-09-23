@@ -2,7 +2,7 @@ generator client {
     provider     = "prisma-client"
     output       = "../src/database/generated/prisma"
     runtime      = "nodejs"
-    moduleFormat = "cjs"
+    moduleFormat = "esm"
 }
 
 datasource db {
@@ -21,6 +21,7 @@ enum EmailTokenType {
     VERIFY_EMAIL
     RESET_PASSWORD
     DELETE_ACCOUNT
+    REACTIVATE_ACCOUNT
 
     @@map("email_token_type")
 }
@@ -64,7 +65,13 @@ model User {
     twoFactorSecret        String?  @map("two_factor_secret")
     twoFactorEnabled       Boolean  @default(false) @map("two_factor_enabled")
     twoFactorRecoveryCodes String[] @map("two_factor_recovery_codes")
+    /// Last accepted TOTP time-step. A code stays valid for its whole 30s window,
+    /// so without remembering the last one accepted, a stolen code can be replayed.
+    twoFactorLastUsedStep  Int?     @map("two_factor_last_used_step")
 
+    /// Self-service deletion only — admins suspend, they never delete. The row
+    /// survives a grace period so the owner can reactivate by email, then the
+    /// purge job removes it for real and frees the unique email/username.
     deletedAt DateTime? @map("deleted_at")
 
     createdAt DateTime @default(now()) @map("created_at")
@@ -167,6 +174,11 @@ model RefreshToken {
     userId    String @map("user_id")
     tokenHash String @unique @map("token_hash")
 
+    /// The rotation chain this token belongs to: refreshing mints a successor carrying
+    /// the same family. Presenting an already-revoked token means the chain leaked, so
+    /// the entire family is revoked rather than just failing the one request.
+    familyId String @map("family_id")
+
     deviceType String? @map("device_type")
     deviceName String? @map("device_name")
     userAgent  String? @map("user_agent")
@@ -180,6 +192,8 @@ model RefreshToken {
     user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
     @@index([userId])
+    @@index([familyId])
+    @@index([expiresAt])
     @@map("refresh_tokens")
 }
 
@@ -197,6 +211,7 @@ model EmailToken {
     user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
     @@unique([userId, type])
+    @@index([expiresAt])
     @@map("email_tokens")
 }
 
@@ -212,6 +227,10 @@ model SocialIdentity {
     user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
     @@unique([provider, providerAccountId])
+    /// A user gets one identity per provider. Without this, signing in with a
+    /// second Google account that happens to share the email silently attached a
+    /// duplicate row, and there is no unlink endpoint to undo it.
+    @@unique([userId, provider])
     @@index([userId])
     @@map("social_identities")
 }
