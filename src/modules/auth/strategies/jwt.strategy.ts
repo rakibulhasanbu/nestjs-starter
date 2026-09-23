@@ -15,7 +15,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         });
     }
 
-    validate(payload: AccessTokenPayload) {
-        return { id: payload.sub, email: payload.email, role: payload.role };
+    /**
+     * Returns the raw claims untouched. Roles and permissions are resolved from
+     * the database by PermissionsGuard, which also verifies the version markers —
+     * this strategy only proves the token's signature and expiry.
+     */
+    validate(payload: AccessTokenPayload): AccessTokenPayload {
+        return payload;
     }
 }

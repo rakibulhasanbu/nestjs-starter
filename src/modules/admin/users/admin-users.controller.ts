@@ -1,75 +1,75 @@
-import {
-    Body,
-    Controller,
-    Delete,
-    Get,
-    HttpCode,
-    HttpStatus,
-    Param,
-    Patch,
-    Post,
-    Query,
-} from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query } from "@nestjs/common";
+import { PERMISSIONS } from "@/common/authorization/permissions.constant.js";
 import { CurrentUser } from "@/common/decorators/current-user.decorator.js";
-import { Roles } from "@/common/decorators/roles.decorator.js";
+import { RequirePermissions } from "@/common/decorators/require-permissions.decorator.js";
 import type { AuthenticatedUser } from "@/common/types/authenticated-request.type.js";
-import { Role } from "@/database/generated/prisma/enums.js";
 import { AdminUsersService } from "@/modules/admin/users/admin-users.service.js";
 import { AdminUpdateUserDto } from "@/modules/admin/users/dto/admin-update-user.schema.js";
-import { InviteAdminDto } from "@/modules/admin/users/dto/invite-admin.schema.js";
+import { AssignRolesDto } from "@/modules/admin/users/dto/assign-roles.schema.js";
+import { InviteUserDto } from "@/modules/admin/users/dto/invite-user.schema.js";
 import { ListUsersDto } from "@/modules/admin/users/dto/list-users.schema.js";
 import { UpdateStatusDto } from "@/modules/admin/users/dto/update-status.schema.js";
 
 @Controller("admin/users")
-@Roles(Role.ADMIN, Role.SUPER_ADMIN)
 export class AdminUsersController {
     constructor(private readonly adminUsersService: AdminUsersService) {}
 
+    @RequirePermissions(PERMISSIONS.USER_READ_ANY)
     @Get()
     list(@Query() query: ListUsersDto) {
         return this.adminUsersService.list(query);
     }
 
+    @RequirePermissions(PERMISSIONS.USER_READ_ANY)
     @Get(":id")
     getById(@CurrentUser() actor: AuthenticatedUser, @Param("id") id: string) {
         return this.adminUsersService.getById(actor, id);
     }
 
+    @RequirePermissions(PERMISSIONS.USER_UPDATE_ANY)
     @Patch(":id")
     update(@CurrentUser() actor: AuthenticatedUser, @Param("id") id: string, @Body() dto: AdminUpdateUserDto) {
         return this.adminUsersService.update(actor, id, dto);
     }
 
+    @RequirePermissions(PERMISSIONS.ROLE_ASSIGN)
+    @Patch(":id/roles")
+    assignRoles(@CurrentUser() actor: AuthenticatedUser, @Param("id") id: string, @Body() dto: AssignRolesDto) {
+        return this.adminUsersService.assignRoles(actor, id, dto);
+    }
+
+    @RequirePermissions(PERMISSIONS.USER_STATUS_ANY)
     @Patch(":id/status")
-    updateStatus(
-        @CurrentUser() actor: AuthenticatedUser,
-        @Param("id") id: string,
-        @Body() dto: UpdateStatusDto,
-    ) {
+    updateStatus(@CurrentUser() actor: AuthenticatedUser, @Param("id") id: string, @Body() dto: UpdateStatusDto) {
         return this.adminUsersService.updateStatus(actor, id, dto.status);
     }
 
+    @RequirePermissions(PERMISSIONS.USER_DELETE_ANY)
     @Delete(":id")
     softDelete(@CurrentUser() actor: AuthenticatedUser, @Param("id") id: string) {
         return this.adminUsersService.softDelete(actor, id);
     }
 
+    @RequirePermissions(PERMISSIONS.USER_RESTORE_ANY)
     @Post(":id/restore")
     restore(@CurrentUser() actor: AuthenticatedUser, @Param("id") id: string) {
         return this.adminUsersService.restore(actor, id);
     }
 
+    @RequirePermissions(PERMISSIONS.USER_PASSWORD_RESET_ANY)
     @HttpCode(HttpStatus.NO_CONTENT)
     @Post(":id/reset-password")
     triggerPasswordReset(@CurrentUser() actor: AuthenticatedUser, @Param("id") id: string) {
         return this.adminUsersService.triggerPasswordReset(actor, id);
     }
 
+    @RequirePermissions(PERMISSIONS.SESSION_READ_ANY)
     @Get(":id/sessions")
     listSessions(@CurrentUser() actor: AuthenticatedUser, @Param("id") id: string) {
         return this.adminUsersService.listSessions(actor, id);
     }
 
+    @RequirePermissions(PERMISSIONS.SESSION_REVOKE_ANY)
     @HttpCode(HttpStatus.NO_CONTENT)
     @Delete(":id/sessions/:sessionId")
     revokeSession(
@@ -80,16 +80,17 @@ export class AdminUsersController {
         return this.adminUsersService.revokeSession(actor, id, sessionId);
     }
 
+    @RequirePermissions(PERMISSIONS.SESSION_REVOKE_ANY)
     @HttpCode(HttpStatus.NO_CONTENT)
     @Delete(":id/sessions")
     revokeAllSessions(@CurrentUser() actor: AuthenticatedUser, @Param("id") id: string) {
         return this.adminUsersService.revokeAllSessions(actor, id);
     }
 
-    @Roles(Role.SUPER_ADMIN)
+    @RequirePermissions(PERMISSIONS.USER_INVITE)
     @HttpCode(HttpStatus.CREATED)
-    @Post("invite-admin")
-    inviteAdmin(@CurrentUser() actor: AuthenticatedUser, @Body() dto: InviteAdminDto) {
-        return this.adminUsersService.inviteAdmin(actor, dto.email);
+    @Post("invite")
+    invite(@CurrentUser() actor: AuthenticatedUser, @Body() dto: InviteUserDto) {
+        return this.adminUsersService.invite(actor, dto);
     }
 }

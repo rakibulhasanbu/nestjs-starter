@@ -4,7 +4,7 @@ import * as argon2 from "argon2";
 import { randomUUID } from "node:crypto";
 import { resolveDeviceInfo } from "@/common/utils/device.util.js";
 import type { Env } from "@/config/env.schema.js";
-import { AuthProvider, EmailTokenType, Role, UserStatus } from "@/database/generated/prisma/enums.js";
+import { AuthProvider, EmailTokenType, UserStatus } from "@/database/generated/prisma/enums.js";
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from "@simplewebauthn/server";
 import { EMAIL_SENDER, type EmailSender } from "@/integrations/email/email-sender.interface.js";
 import { EmailTokensService } from "@/modules/auth/email-tokens.service.js";
@@ -16,7 +16,8 @@ import { TwoFactorService } from "@/modules/auth/two-factor.service.js";
 import type { SignupInput } from "@/modules/auth/dto/signup.schema.js";
 import type { SigninInput } from "@/modules/auth/dto/signin.schema.js";
 import { TokensService } from "@/modules/auth/tokens.service.js";
-import { UsersService } from "@/modules/users/users.service.js";
+import { UsersService, type UserWithRoles } from "@/modules/users/users.service.js";
+import { PermissionsService } from "@/modules/authorization/permissions.service.js";
 import { toPublicUser, type PublicUser } from "@/modules/users/users.mapper.js";
 
 export interface LoginContext {
@@ -35,6 +36,7 @@ export class AuthService {
         private readonly webauthnService: WebauthnService,
         private readonly webauthnCredentialsService: WebauthnCredentialsService,
         private readonly twoFactorService: TwoFactorService,
+        private readonly permissionsService: PermissionsService,
         private readonly configService: ConfigService<Env, true>,
         @Inject(EMAIL_SENDER) private readonly emailSender: EmailSender,
     ) {}
@@ -102,7 +104,7 @@ export class AuthService {
             return { twoFactorRequired: true as const, twoFactorToken: this.tokensService.signTwoFactorToken(user.id) };
         }
 
-        return this.issueSession(user.id, user.email, user.role, context, {
+        return this.issueSession(user, context, {
             deviceType: input.deviceType,
             deviceName: input.deviceName,
         });
@@ -118,7 +120,7 @@ export class AuthService {
             throw new UnauthorizedException("Invalid or expired refresh token");
         }
 
-        return this.issueSession(record.user.id, record.user.email, record.user.role, context, explicitDevice);
+        return this.issueSession(record.user, context, explicitDevice);
     }
 
     async logout(rawRefreshToken: string): Promise<void> {
@@ -136,8 +138,8 @@ export class AuthService {
         if (!user || !(await this.emailTokensService.consume(user.id, EmailTokenType.VERIFY_EMAIL, code))) {
             throw new BadRequestException("Invalid or expired verification code");
         }
-        await this.usersService.markEmailVerified(user.id);
-        return this.issueSession(user.id, user.email, user.role, context, explicitDevice);
+        const verified = await this.usersService.markEmailVerified(user.id);
+        return this.issueSession(verified, context, explicitDevice);
     }
 
     async resendVerification(email: string): Promise<void> {
@@ -183,7 +185,12 @@ export class AuthService {
         await this.usersService.setPassword(user.id, passwordHash);
         await this.usersService.markEmailVerified(user.id);
         await this.tokensService.revokeAllRefreshTokens(user.id);
-        return this.issueSession(user.id, user.email, user.role, context, explicitDevice);
+        // Refresh tokens are revoked above, but access tokens already in the wild
+        // stay signature-valid until they expire — bumping tokenVersion kills those too.
+        await this.permissionsService.bumpTokenVersion(user.id);
+
+        const refreshed = await this.usersService.findByIdOrThrow(user.id);
+        return this.issueSession(refreshed, context, explicitDevice);
     }
 
     async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
@@ -209,6 +216,7 @@ export class AuthService {
         const passwordHash = await argon2.hash(newPassword);
         await this.usersService.setPassword(userId, passwordHash);
         await this.tokensService.revokeAllRefreshTokens(userId);
+        await this.permissionsService.bumpTokenVersion(userId);
     }
 
     /** For social-only accounts (no password yet) to add password login as a second method. */
@@ -243,7 +251,7 @@ export class AuthService {
             throw new UnauthorizedException("This account is not available");
         }
 
-        return this.issueSession(user.id, user.email, user.role, context);
+        return this.issueSession(user, context);
     }
 
     private async linkOrCreateGoogleUser(profile: { providerAccountId: string; email: string; name?: string }) {
@@ -284,6 +292,7 @@ export class AuthService {
 
     async revokeAllSessions(userId: string): Promise<void> {
         await this.tokensService.revokeAllRefreshTokens(userId);
+        await this.permissionsService.bumpTokenVersion(userId);
     }
 
     async requestAccountDeletion(userId: string): Promise<void> {
@@ -311,12 +320,18 @@ export class AuthService {
 
         await this.usersService.softDelete(user.id);
         await this.tokensService.revokeAllRefreshTokens(user.id);
+        await this.permissionsService.bumpTokenVersion(user.id);
 
         const graceDays = this.configService.get("DELETED_USER_GRACE_DAYS", { infer: true });
         await this.emailSender.sendAccountDeleted({ to: user.email, graceDays });
     }
 
-    async inviteAdmin(email: string): Promise<PublicUser> {
+    /**
+     * Creates an account with the given roles and emails a reset code. The
+     * placeholder password is unusable by design — completing the reset is what
+     * both sets a real password and proves the invitee owns the address.
+     */
+    async invite(email: string, roleIds: string[]): Promise<PublicUser> {
         const existing = await this.usersService.findByEmail(email);
         if (existing) {
             throw new ConflictException("An account with this email already exists");
@@ -326,7 +341,7 @@ export class AuthService {
         const user = await this.usersService.createUser({
             email,
             passwordHash: placeholderPassword,
-            role: Role.ADMIN,
+            roleIds,
         });
 
         const code = await this.emailTokensService.issueResetPasswordToken(user.id);
@@ -370,7 +385,7 @@ export class AuthService {
 
         await this.webauthnService.verifyAuthentication(user.id, credential);
 
-        return this.issueSession(user.id, user.email, user.role, context);
+        return this.issueSession(user, context);
     }
 
     getUsernamelessWebauthnLoginOptions() {
@@ -385,7 +400,7 @@ export class AuthService {
             throw new UnauthorizedException("This account is not available");
         }
 
-        return this.issueSession(user.id, user.email, user.role, context);
+        return this.issueSession(user, context);
     }
 
     async listWebauthnCredentials(userId: string) {
@@ -450,7 +465,7 @@ export class AuthService {
             throw new UnauthorizedException("Invalid two-factor code");
         }
 
-        return this.issueSession(user.id, user.email, user.role, context, explicitDevice);
+        return this.issueSession(user, context, explicitDevice);
     }
 
     private async sendVerificationEmail(userId: string, email: string): Promise<void> {
@@ -460,16 +475,24 @@ export class AuthService {
         }
     }
 
+    /**
+     * Stamps the user's current version markers into the access token. The guard
+     * compares them on every request, so any later role change or session kill
+     * invalidates this token immediately instead of at expiry.
+     */
     private async issueSession(
-        userId: string,
-        email: string,
-        role: Role,
+        user: Pick<UserWithRoles, "id" | "email" | "permVersion" | "tokenVersion">,
         context: LoginContext,
         explicitDevice?: { deviceType?: string; deviceName?: string },
     ) {
-        const accessToken = this.tokensService.signAccessToken({ sub: userId, email, role });
+        const accessToken = this.tokensService.signAccessToken({
+            sub: user.id,
+            email: user.email,
+            permVersion: user.permVersion,
+            tokenVersion: user.tokenVersion,
+        });
         const device = resolveDeviceInfo(context.userAgent, explicitDevice);
-        const refreshToken = await this.tokensService.issueRefreshToken(userId, {
+        const refreshToken = await this.tokensService.issueRefreshToken(user.id, {
             userAgent: context.userAgent,
             ipAddress: context.ipAddress,
             device,

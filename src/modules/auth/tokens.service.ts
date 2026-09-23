@@ -6,12 +6,19 @@ import { generateOpaqueToken, hashToken } from "@/common/utils/token.util.js";
 import type { DeviceInfo } from "@/common/utils/device.util.js";
 import type { Env } from "@/config/env.schema.js";
 import { PrismaService } from "@/database/prisma.service.js";
-import type { Role } from "@/database/generated/prisma/enums.js";
 
+/**
+ * Deliberately carries no roles or permissions — only identity plus two version
+ * markers the guard re-validates on every request. Authorization data baked into
+ * a token cannot be revoked before it expires; a version number can.
+ */
 export interface AccessTokenPayload {
     sub: string;
     email: string;
-    role: Role;
+    /** Snapshot of User.permVersion at issue time. Stale value ⇒ the user's access changed. */
+    permVersion: number;
+    /** Snapshot of User.tokenVersion at issue time. Stale value ⇒ the session was killed. */
+    tokenVersion: number;
 }
 
 export interface IssuedTokenPair {

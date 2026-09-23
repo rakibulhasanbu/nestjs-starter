@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post, Req }
 import { Throttle } from "@nestjs/throttler";
 import type { Request } from "express";
 import { CurrentUser } from "@/common/decorators/current-user.decorator.js";
+import { AuthenticatedOnly } from "@/common/decorators/authenticated-only.decorator.js";
 import { Public } from "@/common/decorators/public.decorator.js";
 import type { AuthenticatedUser } from "@/common/types/authenticated-request.type.js";
 import { AuthService } from "@/modules/auth/auth.service.js";
@@ -114,18 +115,21 @@ export class AuthController {
         });
     }
 
+    @AuthenticatedOnly()
     @HttpCode(HttpStatus.NO_CONTENT)
     @Post("set-password")
     async setPassword(@CurrentUser() currentUser: AuthenticatedUser, @Body() dto: SetPasswordDto) {
         await this.authService.setPassword(currentUser.id, dto.newPassword);
     }
 
+    @AuthenticatedOnly()
     @HttpCode(HttpStatus.NO_CONTENT)
     @Post("change-password")
     async changePassword(@CurrentUser() currentUser: AuthenticatedUser, @Body() dto: ChangePasswordDto) {
         await this.authService.changePassword(currentUser.id, dto.currentPassword, dto.newPassword);
     }
 
+    @AuthenticatedOnly()
     @Throttle({ default: { limit: 3, ttl: 60_000 } })
     @HttpCode(HttpStatus.NO_CONTENT)
     @Post("request-account-deletion")
@@ -133,35 +137,41 @@ export class AuthController {
         await this.authService.requestAccountDeletion(currentUser.id);
     }
 
+    @AuthenticatedOnly()
     @HttpCode(HttpStatus.NO_CONTENT)
     @Post("delete-account")
     async deleteAccount(@CurrentUser() currentUser: AuthenticatedUser, @Body() dto: DeleteAccountDto) {
         await this.authService.deleteAccount(currentUser.id, dto.code);
     }
 
+    @AuthenticatedOnly()
     @Get("sessions")
     listSessions(@CurrentUser() currentUser: AuthenticatedUser) {
         return this.authService.listSessions(currentUser.id);
     }
 
+    @AuthenticatedOnly()
     @HttpCode(HttpStatus.NO_CONTENT)
     @Delete("sessions/:sessionId")
     revokeSession(@CurrentUser() currentUser: AuthenticatedUser, @Param("sessionId") sessionId: string) {
         return this.authService.revokeSession(currentUser.id, sessionId);
     }
 
+    @AuthenticatedOnly()
     @HttpCode(HttpStatus.NO_CONTENT)
     @Delete("sessions")
     revokeAllSessions(@CurrentUser() currentUser: AuthenticatedUser) {
         return this.authService.revokeAllSessions(currentUser.id);
     }
 
+    @AuthenticatedOnly()
     @HttpCode(HttpStatus.OK)
     @Post("webauthn/register/options")
     getWebauthnRegistrationOptions(@CurrentUser() currentUser: AuthenticatedUser) {
         return this.authService.getWebauthnRegistrationOptions(currentUser.id);
     }
 
+    @AuthenticatedOnly()
     @HttpCode(HttpStatus.NO_CONTENT)
     @Post("webauthn/register/verify")
     async verifyWebauthnRegistration(
@@ -213,11 +223,13 @@ export class AuthController {
         });
     }
 
+    @AuthenticatedOnly()
     @Get("webauthn/credentials")
     listWebauthnCredentials(@CurrentUser() currentUser: AuthenticatedUser) {
         return this.authService.listWebauthnCredentials(currentUser.id);
     }
 
+    @AuthenticatedOnly()
     @HttpCode(HttpStatus.NO_CONTENT)
     @Delete("webauthn/credentials/:credentialId")
     removeWebauthnCredential(
@@ -227,18 +239,21 @@ export class AuthController {
         return this.authService.removeWebauthnCredential(currentUser.id, credentialId);
     }
 
+    @AuthenticatedOnly()
     @HttpCode(HttpStatus.OK)
     @Post("2fa/setup")
     setupTwoFactor(@CurrentUser() currentUser: AuthenticatedUser) {
         return this.authService.setupTwoFactor(currentUser.id);
     }
 
+    @AuthenticatedOnly()
     @HttpCode(HttpStatus.OK)
     @Post("2fa/enable")
     enableTwoFactor(@CurrentUser() currentUser: AuthenticatedUser, @Body() dto: TwoFactorEnableDto) {
         return this.authService.enableTwoFactor(currentUser.id, dto.code);
     }
 
+    @AuthenticatedOnly()
     @HttpCode(HttpStatus.NO_CONTENT)
     @Post("2fa/disable")
     async disableTwoFactor(@CurrentUser() currentUser: AuthenticatedUser, @Body() dto: TwoFactorDisableDto) {

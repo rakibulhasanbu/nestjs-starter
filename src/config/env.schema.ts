@@ -6,15 +6,16 @@ const baseEnvSchema = z.object({
     APP_URL: z.url().default("http://localhost:3000"),
 
     DATABASE_URL: z.url(),
+    REDIS_URL: z.url().default("redis://localhost:6379"),
 
     CORS_ORIGINS: z
         .string()
         .optional()
-        .transform((value) =>
+        .transform(value =>
             value
                 ? value
                       .split(",")
-                      .map((origin) => origin.trim())
+                      .map(origin => origin.trim())
                       .filter(Boolean)
                 : undefined,
         )
@@ -43,6 +44,13 @@ const baseEnvSchema = z.object({
     TWO_FACTOR_APP_NAME: z.string().min(1).default("Nest Starter"),
     TWO_FACTOR_ENCRYPTION_KEY: z.string().length(64, "TWO_FACTOR_ENCRYPTION_KEY must be a 32-byte hex string"),
     TWO_FACTOR_LOGIN_TTL: z.string().default("5m"),
+
+    /** How long a resolved permission set may live in this process's memory before it is re-read. */
+    PERM_CACHE_L1_TTL_MS: z.coerce.number().default(30_000),
+    /** How long a resolved permission set may live in Redis. Acts as a self-healing ceiling on stale data. */
+    PERM_CACHE_L2_TTL_SECONDS: z.coerce.number().default(300),
+    /** Upper bound on L1 entries, so the in-memory cache cannot grow without limit. */
+    PERM_CACHE_L1_MAX_ENTRIES: z.coerce.number().default(10_000),
 
     ADMIN_EMAIL: z.email(),
     ADMIN_PASSWORD: z.string().min(8),
