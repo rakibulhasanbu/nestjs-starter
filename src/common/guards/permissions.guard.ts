@@ -80,6 +80,7 @@ export class PermissionsGuard implements CanActivate {
             roleIds: principal.roleIds,
             permissions: principal.permissions,
             maxRank: principal.maxRank,
+            sessionId: claims.sessionId,
             can: permission => principal.permissions.has(permission),
         };
 

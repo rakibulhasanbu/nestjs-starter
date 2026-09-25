@@ -358,9 +358,17 @@ export class AuthService {
         return user;
     }
 
-    async listSessions(userId: string) {
+    /**
+     * `currentSessionId` is the caller's own refresh-token family, taken from
+     * their access token. Without `isCurrent` the client cannot tell which row
+     * is the device in the user's hand, so "sign out" is a coin flip.
+     */
+    async listSessions(userId: string, currentSessionId?: string) {
         const sessions = await this.tokensService.listActiveSessions(userId);
-        return sessions.map(({ tokenHash: _tokenHash, ...session }) => session);
+        return sessions.map(({ tokenHash: _tokenHash, ...session }) => ({
+            ...session,
+            isCurrent: currentSessionId !== undefined && session.familyId === currentSessionId,
+        }));
     }
 
     async revokeSession(userId: string, sessionId: string): Promise<void> {
@@ -704,14 +712,10 @@ export class AuthService {
         explicitDevice?: { deviceType?: string; deviceName?: string },
         familyId?: string,
     ) {
-        const accessToken = this.tokensService.signAccessToken({
-            sub: user.id,
-            email: user.email,
-            permVersion: user.permVersion,
-            tokenVersion: user.tokenVersion,
-        });
         const device = resolveDeviceInfo(context.userAgent, explicitDevice);
-        const { token: refreshToken } = await this.tokensService.issueRefreshToken(
+        // The refresh token goes first because it decides the family id, and the
+        // access token has to carry that id to know which session it belongs to.
+        const { token: refreshToken, familyId: sessionId } = await this.tokensService.issueRefreshToken(
             user.id,
             {
                 userAgent: context.userAgent,
@@ -720,6 +724,13 @@ export class AuthService {
             },
             familyId,
         );
+        const accessToken = this.tokensService.signAccessToken({
+            sub: user.id,
+            email: user.email,
+            permVersion: user.permVersion,
+            tokenVersion: user.tokenVersion,
+            sessionId,
+        });
 
         return { accessToken, refreshToken };
     }

@@ -20,6 +20,19 @@ export interface AccessTokenPayload {
     permVersion: number;
     /** Snapshot of User.tokenVersion at issue time. Stale value ⇒ the session was killed. */
     tokenVersion: number;
+    /**
+     * The refresh-token family this access token belongs to — i.e. which login
+     * it came from. It survives rotation, so it is the only stable handle a
+     * caller has on its own session; `GET /auth/sessions` uses it to mark the
+     * row the caller is sitting on.
+     *
+     * Not a credential: the opaque refresh token is what proves anything, and
+     * revoking a family still requires being signed in as its owner.
+     *
+     * Optional because access tokens minted before this existed are still valid
+     * until they expire; treat `undefined` as "cannot tell which session".
+     */
+    sessionId?: string;
 }
 
 export interface IssuedTokenPair {

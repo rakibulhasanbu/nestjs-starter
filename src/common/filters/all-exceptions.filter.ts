@@ -68,6 +68,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
             const code = isObject && (exceptionResponse as { code?: string }).code;
 
             return {
+                // Anything the thrower attached beyond the standard shape is
+                // context the client is meant to act on (a deadline, a retry
+                // hint), so it survives instead of being silently dropped here.
+                ...(isObject ? extractErrorContext(exceptionResponse as Record<string, unknown>) : {}),
                 statusCode: status,
                 code: code || (HttpStatus[status] ?? "ERROR"),
                 message: Array.isArray(message) ? message.join(", ") : message,
@@ -115,6 +119,17 @@ export class AllExceptionsFilter implements ExceptionFilter {
                 };
         }
     }
+}
+
+/**
+ * Keys that describe the envelope rather than the error, so they are rebuilt
+ * from the exception itself rather than copied through. `status` is in here
+ * because Nest's own payloads use it interchangeably with `statusCode`.
+ */
+const RESERVED_ERROR_KEYS = new Set(["statusCode", "status", "code", "message", "error"]);
+
+function extractErrorContext(response: Record<string, unknown>): Record<string, unknown> {
+    return Object.fromEntries(Object.entries(response).filter(([key]) => !RESERVED_ERROR_KEYS.has(key)));
 }
 
 /** `meta.target` carries the offending column(s) — a string or an array, depending on the driver. */

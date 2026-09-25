@@ -47,4 +47,9 @@ describe("toPublicUser", () => {
     it("returns a null profile when the user has none", () => {
         expect(toPublicUser(buildUser()).profile).toBeNull();
     });
+
+    it("reports whether password login is set up, without exposing the hash", () => {
+        expect(toPublicUser(buildUser()).hasPassword).toBe(true);
+        expect(toPublicUser(buildUser({ password: null })).hasPassword).toBe(false);
+    });
 });

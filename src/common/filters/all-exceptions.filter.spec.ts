@@ -111,6 +111,29 @@ describe("AllExceptionsFilter", () => {
         expect(unknown.body()).toMatchObject({ statusCode: 500, code: "INTERNAL_SERVER_ERROR" });
     });
 
+    it("passes through extra context an exception attaches to its payload", () => {
+        const { host, body } = createHost();
+
+        filter.catch(
+            new HttpException(
+                {
+                    code: "ACCOUNT_PENDING_DELETION",
+                    message: "Scheduled for deletion",
+                    graceEndsAt: "2026-01-01T00:00:00.000Z",
+                },
+                HttpStatus.CONFLICT,
+            ),
+            host,
+        );
+
+        expect(body()).toEqual({
+            statusCode: 409,
+            code: "ACCOUNT_PENDING_DELETION",
+            message: "Scheduled for deletion",
+            graceEndsAt: "2026-01-01T00:00:00.000Z",
+        });
+    });
+
     it("preserves a custom code carried on an HttpException payload", () => {
         const { host, body } = createHost();
 

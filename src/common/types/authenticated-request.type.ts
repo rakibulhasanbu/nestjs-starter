@@ -14,6 +14,12 @@ export interface AuthenticatedUser {
     permissions: ReadonlySet<PermissionKey>;
     /** Highest rank across the user's roles. An actor may only manage users ranked below them. */
     maxRank: number;
+    /**
+     * Which session this request came from (the refresh-token family id), so a
+     * sessions list can point at the caller's own row. Undefined for access
+     * tokens issued before the claim existed.
+     */
+    sessionId: string | undefined;
     can(permission: PermissionKey): boolean;
 }
 

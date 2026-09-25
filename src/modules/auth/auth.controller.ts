@@ -161,7 +161,7 @@ export class AuthController {
     @AuthenticatedOnly()
     @Get("sessions")
     listSessions(@CurrentUser() currentUser: AuthenticatedUser) {
-        return this.authService.listSessions(currentUser.id);
+        return this.authService.listSessions(currentUser.id, currentUser.sessionId);
     }
 
     @AuthenticatedOnly()
