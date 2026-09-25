@@ -121,6 +121,38 @@ describe("Auth and admin flows (e2e)", () => {
         });
     });
 
+    describe("/users/me/notifications", () => {
+        it("defaults every channel on, then persists a partial update", async () => {
+            const { email } = await createUser();
+            const { accessToken } = await signIn(email);
+
+            const before = await authed("get", "/users/me/notifications", accessToken).expect(200);
+            expect(before.body.data).toEqual({
+                loginEmailNotification: true,
+                transactionsEmailNotification: true,
+                transactionsPushNotification: true,
+            });
+
+            await authed("patch", "/users/me/notifications", accessToken)
+                .send({ transactionsPushNotification: false })
+                .expect(200);
+
+            const after = await authed("get", "/users/me/notifications", accessToken).expect(200);
+            expect(after.body.data).toEqual({
+                loginEmailNotification: true,
+                transactionsEmailNotification: true,
+                transactionsPushNotification: false,
+            });
+        });
+
+        it("rejects unknown channels", async () => {
+            const { email } = await createUser();
+            const { accessToken } = await signIn(email);
+
+            await authed("patch", "/users/me/notifications", accessToken).send({ smsNotification: true }).expect(400);
+        });
+    });
+
     describe("GET /auth/sessions", () => {
         it("marks the session the request came from, and only that one", async () => {
             const { email } = await createUser();
@@ -131,7 +163,7 @@ describe("Auth and admin flows (e2e)", () => {
             const sessions = fromFirst.body.data as { id: string; isCurrent: boolean }[];
 
             expect(sessions).toHaveLength(2);
-            expect(sessions.filter((session) => session.isCurrent)).toHaveLength(1);
+            expect(sessions.filter(session => session.isCurrent)).toHaveLength(1);
         });
 
         it("revoking a session drops it from the list", async () => {
@@ -141,7 +173,7 @@ describe("Auth and admin flows (e2e)", () => {
 
             const before = await authed("get", "/auth/sessions", keep.accessToken).expect(200);
             const other = (before.body.data as { id: string; isCurrent: boolean }[]).find(
-                (session) => !session.isCurrent,
+                session => !session.isCurrent,
             )!;
 
             await authed("delete", `/auth/sessions/${other.id}`, keep.accessToken).expect(204);
@@ -164,17 +196,13 @@ describe("Auth and admin flows (e2e)", () => {
             const before = await authed("get", "/users/me", accessToken).expect(200);
             expect(before.body.data.hasPassword).toBe(false);
 
-            await authed("post", "/auth/set-password", accessToken)
-                .send({ newPassword: PASSWORD })
-                .expect(204);
+            await authed("post", "/auth/set-password", accessToken).send({ newPassword: PASSWORD }).expect(204);
 
             const after = await authed("get", "/users/me", accessToken).expect(200);
             expect(after.body.data.hasPassword).toBe(true);
 
             // A second call is the change-password case, which needs the current one.
-            await authed("post", "/auth/set-password", accessToken)
-                .send({ newPassword: PASSWORD })
-                .expect(400);
+            await authed("post", "/auth/set-password", accessToken).send({ newPassword: PASSWORD }).expect(400);
         });
     });
 
@@ -203,10 +231,7 @@ describe("Auth and admin flows (e2e)", () => {
             // own rather than trying to read back the one the 409 mails out.
             const code = await emailTokens.issueReactivateAccountToken(id);
 
-            await request(app.getHttpServer())
-                .post(`${API}/auth/reactivate-account`)
-                .send({ email, code })
-                .expect(204);
+            await request(app.getHttpServer()).post(`${API}/auth/reactivate-account`).send({ email, code }).expect(204);
 
             expect(await prisma.user.findUnique({ where: { id } })).toMatchObject({ deletedAt: null });
             await signIn(email);
@@ -284,7 +309,7 @@ describe("Auth and admin flows (e2e)", () => {
 
             const withPermission = await signIn(privileged.email);
             const response = await authed("get", "/admin/roles", withPermission.accessToken).expect(200);
-            expect((response.body.data as { id: string }[]).map((role) => role.id)).toEqual(
+            expect((response.body.data as { id: string }[]).map(role => role.id)).toEqual(
                 expect.arrayContaining([SYSTEM_ROLE_IDS.USER, SYSTEM_ROLE_IDS.ADMIN]),
             );
 

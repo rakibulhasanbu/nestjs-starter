@@ -3,6 +3,7 @@ import { PrismaService } from "@/database/prisma.service.js";
 import { Gender, UserStatus } from "@/database/generated/prisma/enums.js";
 import { SYSTEM_ROLE_IDS } from "@/common/authorization/system-roles.constant.js";
 import type { UserModel, UserProfileModel } from "@/database/generated/prisma/models.js";
+import type { UpdateNotificationPreferencesInput } from "@/modules/users/dto/update-notification-preferences.schema.js";
 
 /**
  * Role ids and the optional profile travel with every user this service returns
@@ -40,6 +41,25 @@ export interface UpdateProfileData {
     avatarUrl?: string;
     profile?: UpdateUserProfileData;
 }
+
+export interface NotificationPreferences {
+    loginEmailNotification: boolean;
+    transactionsEmailNotification: boolean;
+    transactionsPushNotification: boolean;
+}
+
+/** What a user without a saved row gets — must match the column defaults in schema.prisma. */
+const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
+    loginEmailNotification: true,
+    transactionsEmailNotification: true,
+    transactionsPushNotification: true,
+};
+
+const notificationPreferencesSelect = {
+    loginEmailNotification: true,
+    transactionsEmailNotification: true,
+    transactionsPushNotification: true,
+} as const;
 
 @Injectable()
 export class UsersService {
@@ -143,6 +163,27 @@ export class UsersService {
                 ...(profile ? { profile: { upsert: toProfileUpsert(profile) } } : {}),
             },
             include: withRoles,
+        });
+    }
+
+    async getNotificationPreferences(userId: string): Promise<NotificationPreferences> {
+        const preferences = await this.prisma.notificationPreferences.findUnique({
+            where: { userId },
+            select: notificationPreferencesSelect,
+        });
+        return preferences ?? DEFAULT_NOTIFICATION_PREFERENCES;
+    }
+
+    /** Upserted because the row only exists once the user has saved preferences at least once. */
+    updateNotificationPreferences(
+        userId: string,
+        data: UpdateNotificationPreferencesInput,
+    ): Promise<NotificationPreferences> {
+        return this.prisma.notificationPreferences.upsert({
+            where: { userId },
+            create: { userId, ...data },
+            update: data,
+            select: notificationPreferencesSelect,
         });
     }
 

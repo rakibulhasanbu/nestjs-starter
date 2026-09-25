@@ -77,7 +77,8 @@ model User {
     createdAt DateTime @default(now()) @map("created_at")
     updatedAt DateTime @updatedAt @map("updated_at")
 
-    profile             UserProfile?
+    profile                 UserProfile?
+    notificationPreferences NotificationPreferences?
     roles               UserRole[]
     refreshTokens       RefreshToken[]
     emailTokens         EmailToken[]
@@ -103,6 +104,24 @@ model UserProfile {
     user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
     @@map("user_profiles")
+}
+
+/// Which notifications the user opted into. Created lazily on first save — a
+/// missing row means every channel is still on its default (enabled), which is
+/// why the defaults here and in the users service must agree.
+model NotificationPreferences {
+    userId String @id @map("user_id")
+
+    loginEmailNotification        Boolean @default(true) @map("login_email_notification")
+    transactionsEmailNotification Boolean @default(true) @map("transactions_email_notification")
+    transactionsPushNotification  Boolean @default(true) @map("transactions_push_notification")
+
+    createdAt DateTime @default(now()) @map("created_at")
+    updatedAt DateTime @updatedAt @map("updated_at")
+
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@map("notification_preferences")
 }
 
 /// A named bundle of permissions. `id` is a stable slug ("admin") because code
