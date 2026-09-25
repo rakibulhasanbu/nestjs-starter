@@ -11,6 +11,7 @@ import type { InviteUserInput } from "@/modules/admin/users/dto/invite-user.sche
 import type { ListUsersInput } from "@/modules/admin/users/dto/list-users.schema.js";
 import { UsersService, type UserWithRoles } from "@/modules/users/users.service.js";
 import { toPublicUser } from "@/modules/users/users.mapper.js";
+import { paginate } from "@/common/utils/pagination.util.js";
 
 @Injectable()
 export class AdminUsersService {
@@ -27,10 +28,7 @@ export class AdminUsersService {
             ...query,
             visibleTo: { actorId: actor.id, maxRank: actor.maxRank },
         });
-        return {
-            data: items.map(toPublicUser),
-            meta: { page: query.page, limit: query.limit, total },
-        };
+        return paginate(items.map(toPublicUser), query, total);
     }
 
     async getById(actor: AuthenticatedUser, targetId: string) {

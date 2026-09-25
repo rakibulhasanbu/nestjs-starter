@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { createZodDto } from "nestjs-zod";
 import { UserStatus } from "@/database/generated/prisma/enums.js";
+import { paginationSchema } from "@/common/utils/pagination.util.js";
 
 export const listUsersSchema = z.strictObject({
-    page: z.coerce.number().int().min(1).default(1),
-    limit: z.coerce.number().int().min(1).max(100).default(20),
+    ...paginationSchema.shape,
     search: z.string().min(1).max(100).optional(),
     /** Role slug, e.g. "admin". Free-form because roles are created at runtime. */
     roleId: z.string().min(1).max(50).optional(),

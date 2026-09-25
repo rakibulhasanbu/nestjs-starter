@@ -4,6 +4,7 @@ import { Gender, UserStatus } from "@/database/generated/prisma/enums.js";
 import { SYSTEM_ROLE_IDS } from "@/common/authorization/system-roles.constant.js";
 import type { UserModel, UserProfileModel } from "@/database/generated/prisma/models.js";
 import type { UpdateNotificationPreferencesInput } from "@/modules/users/dto/update-notification-preferences.schema.js";
+import { toSkipTake } from "@/common/utils/pagination.util.js";
 
 /**
  * Role ids and the optional profile travel with every user this service returns
@@ -251,8 +252,7 @@ export class UsersService {
         const [items, total] = await Promise.all([
             this.prisma.user.findMany({
                 where,
-                skip: (params.page - 1) * params.limit,
-                take: params.limit,
+                ...toSkipTake(params),
                 orderBy: { createdAt: "desc" },
                 include: withRoles,
             }),
